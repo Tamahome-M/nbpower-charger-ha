@@ -1,24 +1,31 @@
 # Changelog
 
+## [1.2.0] - 2025-XX-XX
+
+### Added — network status sensors
+- WiFi state (off / disconnected / no_network / connected) — text label
+- WiFi RSSI signal level (0-3 bars)
+- Cellular network mode (4G / 3G / 2G / no signal)
+- Cellular RSSI (0-5 bars)
+- Network operator name
+- SIM card presence flag (in attributes)
+- 4G modem availability flag
+- All powered by CMD 11 (network status command)
+
+## [1.1.0] - 2025-XX-XX
+
+### Added — extended sensor set from app
+- **Last session info** (CMD 50): kWh, duration, max temperature, min voltage, requested current, stop reason (19 types)
+- **Lifetime totals** (CMD 43): total energy, total session count
+- Slow-poll mechanism: heavy data fetched every 6 cycles
+
 ## [1.0.1] - 2025-XX-XX
 
 ### Fixed
-- Config flow: when adding a Bluetooth-discovered charger, MAC is now auto-populated (was empty)
-- Removed `max_amps` from initial config flow — it's now only in Options (default 16 A)
-- Added separate steps for Bluetooth confirmation, picking from discovered devices, and manual MAC entry
-- Improved translations for new flow steps
+- Config flow: MAC auto-populated from Bluetooth discovery
+- Removed max_amps from initial config flow
 
 ## [1.0.0] - 2025-XX-XX
 
 ### Added
-- Initial release
-- BLE protocol reverse-engineered from NBPowen app v2.0.15
-- Support for FFD0 (polling) and FFE0 (notify) BLE service modes
-- 10+ sensors (voltage, current, power, energy, temperature, charge state, timers)
-- Switch entity for start/stop charging
-- Number entity for adjustable max current (6-32 A)
-- Auto-discovery via Bluetooth
-- Config flow with MAC address input
-- Russian and English translations
-- Standalone debug script (`scripts/nbpower_debug.py`)
-- Tested with firmware v45, device_num=31 (AC charger)
+- Initial release with full BLE protocol support

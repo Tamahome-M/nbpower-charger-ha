@@ -29,6 +29,48 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, CHARGE_STATE_NAMES
 from .coordinator import NBPowerCoordinator
 
+# Russian labels for stop reason codes
+STOP_REASON_LABELS = {
+    0:  "Таймер остановки",
+    1:  "Ручная остановка",
+    2:  "Перегрев",
+    3:  "Перегрузка по току",
+    4:  "Перенапряжение",
+    5:  "Низкое напряжение",
+    6:  "Остановка вилки",
+    7:  "Полная остановка",
+    8:  "Залипание реле",
+    9:  "Реле не включается",
+    10: "Ненормальная температура вилки",
+    11: "Ненормальный счётчик",
+    12: "Заземление или НН ненормальное",
+    13: "Ненормальное заземление",
+    14: "Аварийная кнопка",
+    15: "Нет токена",
+    16: "Утечка",
+    17: "Оффлайн остановка",
+    18: "Оффлайн остановка",
+}
+
+# Russian labels for WiFi state
+WIFI_STATE_LABELS = {
+    0: "Выключен",
+    1: "Не подключен",
+    2: "Подключен, нет интернета",
+    3: "Подключен",
+}
+
+# Russian labels for cellular network mode
+NET_MODE_LABELS = {
+    0: "Нет сигнала",
+    1: "2G",
+    2: "2.5G",
+    3: "3G TD",
+    4: "4G",
+    5: "3G WCDMA",
+    15: "Модуль отсутствует",
+}
+
 
 @dataclass
 class NBPowerSensorDescription(SensorEntityDescription):
@@ -162,6 +204,131 @@ SENSOR_DESCRIPTIONS: tuple[NBPowerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:current-ac",
         value_fn=lambda d: d["status"].current_amps,
+        entity_registry_enabled_default=False,
+    ),
+    # ── Last session info ─────────────────────────────────────────────────────
+    NBPowerSensorDescription(
+        key="last_session_kwh",
+        name="Энергия прошлой сессии",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:battery-charging-high",
+        value_fn=lambda d: d["last_session"].session_kwh,
+    ),
+    NBPowerSensorDescription(
+        key="last_session_duration",
+        name="Длительность прошлой сессии",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:timer-check",
+        value_fn=lambda d: d["last_session"].work_minutes,
+    ),
+    NBPowerSensorDescription(
+        key="last_session_max_temp",
+        name="Макс. температура прошлой сессии",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:thermometer-high",
+        value_fn=lambda d: d["last_session"].max_temperature,
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="last_session_min_voltage",
+        name="Мин. напряжение прошлой сессии",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:flash-alert",
+        value_fn=lambda d: d["last_session"].meter_v_min,
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="last_session_requested_amps",
+        name="Запрошенный ток прошлой сессии",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:current-ac",
+        value_fn=lambda d: d["last_session"].requested_amps,
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="last_stop_reason",
+        name="Причина прошлой остановки",
+        icon="mdi:stop-circle-outline",
+        value_fn=lambda d: STOP_REASON_LABELS.get(
+            d["last_session"].stop_reason_code,
+            d["last_session"].stop_reason,
+        ),
+    ),
+    NBPowerSensorDescription(
+        key="last_stop_code",
+        name="Код прошлой остановки",
+        icon="mdi:numeric",
+        value_fn=lambda d: d["last_session"].stop_reason_code,
+        entity_registry_enabled_default=False,
+    ),
+    # ── Lifetime totals ───────────────────────────────────────────────────────
+    NBPowerSensorDescription(
+        key="total_kwh",
+        name="Всего заряжено",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        value_fn=lambda d: d["totals"].total_kwh,
+    ),
+    NBPowerSensorDescription(
+        key="total_charge_count",
+        name="Количество сессий",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        value_fn=lambda d: d["totals"].total_charge_count,
+    ),
+    # ── Network / WiFi ────────────────────────────────────────────────────────
+    NBPowerSensorDescription(
+        key="wifi_state",
+        name="WiFi состояние",
+        icon="mdi:wifi",
+        value_fn=lambda d: WIFI_STATE_LABELS.get(
+            d["network"].wifi_state, d["network"].wifi_state_str
+        ),
+    ),
+    NBPowerSensorDescription(
+        key="wifi_rssi_level",
+        name="WiFi сигнал",
+        icon="mdi:wifi-strength-2",
+        native_unit_of_measurement="bars",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d["network"].wifi_rssi_level,
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="network_mode",
+        name="Тип сети",
+        icon="mdi:signal-cellular-3",
+        value_fn=lambda d: NET_MODE_LABELS.get(
+            d["network"].net_mode, d["network"].net_mode_str
+        ),
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="network_rssi",
+        name="Сигнал сети",
+        icon="mdi:signal",
+        native_unit_of_measurement="bars",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d["network"].net_rssi,
+        entity_registry_enabled_default=False,
+    ),
+    NBPowerSensorDescription(
+        key="network_operator",
+        name="Оператор",
+        icon="mdi:sim",
+        value_fn=lambda d: d["network"].operator,
         entity_registry_enabled_default=False,
     ),
 )

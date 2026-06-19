@@ -44,13 +44,59 @@ CMD_GET_VERSION   = 0x01
 CMD_GET_METER     = 0x08
 CMD_GET_NETWORK   = 0x0B
 CMD_REBOOT        = 0x10
+CMD_GET_TOTALS    = 0x2B   # CMD 43 — total times charged + total kWh
+CMD_GET_MAXAMP    = 0x2F   # CMD 47 — max amps and frequency
 CMD_HEARTBEAT     = 0x31
-CMD_GET_AUTH      = 0x42   # Returns 5-byte challenge for start charge
+CMD_GET_LAST      = 0x32   # CMD 50 — last charge session info
+CMD_GET_AUTH      = 0x42
 CMD_START_CHARGE  = 0x43
 CMD_SYNC_TIME     = 0x45
 
 # Minimum delay between BLE writes (matches NBPowen app)
 WRITE_DELAY_MS = 20
+
+
+# ── Stop reason codes (CMD 50) ─────────────────────────────────────────────────
+STOP_REASONS = {
+    0:  "timing_stop",        # Таймер остановки
+    1:  "manual_stop",        # Ручная остановка
+    2:  "overtemperature",    # Перегрев
+    3:  "overcurrent",        # Перегрузка по току
+    4:  "overvoltage",        # Перенапряжение
+    5:  "low_voltage",        # Низкое напряжение
+    6:  "plug_stop",          # Остановка при включении
+    7:  "full_stop",          # Полная остановка (зарядка завершена)
+    8:  "relay_adhesion",     # Реле прилипание
+    9:  "relay_failure",      # Реле не включается
+    10: "plug_temp_abnormal", # Ненормальная температура вилки
+    11: "meter_abnormal",     # Ненормальный счётчик
+    12: "ground_or_nl_error", # Заземление или НН ненормальное
+    13: "ground_error",       # Ненормальное заземление
+    14: "emergency_button",   # Кнопка аварийного отключения
+    15: "no_token",           # Нет токена
+    16: "leakage",            # Утечка
+    17: "offline_stop",       # Оффлайн остановка
+    18: "offline_stop",       # Оффлайн остановка
+}
+
+# ── Network mode codes (CMD 11 byte 1, low nibble) ─────────────────────────────
+NET_MODE_NAMES = {
+    0: "no_signal",
+    1: "2g",
+    2: "2.5g",
+    3: "3g_td",
+    4: "4g",
+    5: "3g_wcdma",
+    15: "no_4g_module",  # 0xF means cellular module absent
+}
+
+# ── WiFi state codes (CMD 11 byte 1, bits 4-5) ─────────────────────────────────
+WIFI_STATE_NAMES = {
+    0: "off",            # WiFi отключен
+    1: "disconnected",   # Не подключено к WiFi
+    2: "no_network",     # WiFi подключен, но нет сети (Интернета)
+    3: "connected",      # Нормальное подключение
+}
 
 
 @dataclass
@@ -85,6 +131,46 @@ class NBPowerDeviceInfo:
     device_num: int = 0
     meter_count: int = 1
     is_dc: bool = False
+
+
+@dataclass
+class NBPowerLastSession:
+    """Last charging session info from CMD 50."""
+    requested_amps: float = 0.0      # Set ampers (l[12] → pwm → amp)
+    max_temperature: float = 0.0     # Max temperature during session (°C)
+    timer_minutes: int = 0           # Set timer in minutes (65535 = no limit)
+    work_minutes: int = 0            # Actual charging duration in minutes
+    stop_reason_code: int = 0        # Numeric stop code
+    stop_reason: str = ""            # Human-readable stop reason
+    session_kwh: float = 0.0         # kWh consumed in last session
+    end_cp_value: int = 0            # CP check value at stop
+    meter_v_min: int = 0             # Minimum voltage during session
+
+
+@dataclass
+class NBPowerTotals:
+    """Lifetime totals from CMD 43."""
+    total_charge_count: int = 0      # Total number of charging sessions
+    total_kwh: float = 0.0           # Total energy delivered (kWh)
+
+
+@dataclass
+class NBPowerNetworkInfo:
+    """Network / WiFi / Cellular state from CMD 11."""
+    # WiFi
+    wifi_state: int = 0              # 0=off, 1=not connected, 2=connected no network, 3=connected
+    wifi_state_str: str = "off"
+    wifi_rssi_level: int = 0         # 0-3 bars
+    # Cellular (4G/2G/3G)
+    has_4g: bool = False
+    net_mode: int = 0                # 0..5
+    net_mode_str: str = "no_signal"
+    net_rssi: int = 0                # 0-5 bars
+    net_sim_present: bool = False
+    net_version: int = 0
+    operator: str = "-"
+    # WAN state (router uplink)
+    wan_state: int = 0               # 0-3
 
 
 class NBPowerBLEClient:
@@ -459,6 +545,137 @@ class NBPowerBLEClient:
             "elapsed_minutes": elapsed,
             "remaining_minutes": remaining,
         }
+
+    async def get_last_session(self) -> NBPowerLastSession:
+        """CMD 50 — Get information about the last charging session.
+
+        Response layout (per app):
+            n[0]    = min voltage during session (if meter supported)
+            n[2..3] = work_minutes (big-endian)  — actual charging time
+            n[4..5] = u (used for kWh calculation, version > 27: kwh*100)
+            n[6..7] = end_cp_value
+            n[8]    = max temperature + 40 (raw)
+            n[9..10] = timer_minutes set
+            n[11]   = stop reason packed:
+                - DC: full byte = stop reason code
+                - AC (fw <= 29): high nibble = pre-fault state, low nibble = stop code
+                - AC (fw > 29): bits 7..3 = pre-fault state, bits 4..0 = stop code
+            n[12]   = pwm range (set current → amp via pwm_to_amp)
+        """
+        data = await self._write_command(CMD_GET_LAST)
+        if not data or len(data) < 12:
+            return NBPowerLastSession()
+
+        n = data
+        ver = self._device_version
+        meter_v_min = n[0] if len(n) > 0 else 0
+        work_minutes = (n[2] << 8 | n[3]) if len(n) > 3 else 0
+        u = (n[4] << 8 | n[5]) if len(n) > 5 else 0
+        end_cp = (n[6] << 8 | n[7]) if len(n) > 7 else 0
+        max_temp = (n[8] - 40) if len(n) > 8 else 0
+        timer_minutes = (n[9] << 8 | n[10]) if len(n) > 10 else 0
+
+        # Decode stop reason
+        stop_code = 0
+        if len(n) > 11:
+            raw = n[11]
+            if ver > 29:
+                stop_code = raw & 0x1F        # bits 0-4
+            else:
+                stop_code = raw & 0x0F        # bits 0-3
+        stop_reason = STOP_REASONS.get(stop_code, f"unknown_{stop_code}")
+
+        # Decode set ampers
+        requested_amps = 0.0
+        if len(n) > 12:
+            requested_amps = self._pwm_to_amp(n[12])
+
+        # kWh calculation (works for fw > 27, simpler case)
+        session_kwh = round(u / 100, 2) if ver > 27 else 0.0
+
+        return NBPowerLastSession(
+            requested_amps=requested_amps,
+            max_temperature=float(max_temp),
+            timer_minutes=timer_minutes,
+            work_minutes=work_minutes,
+            stop_reason_code=stop_code,
+            stop_reason=stop_reason,
+            session_kwh=session_kwh,
+            end_cp_value=end_cp,
+            meter_v_min=meter_v_min,
+        )
+
+    async def get_network_info(self) -> NBPowerNetworkInfo:
+        """CMD 11 — Get WiFi / cellular network state.
+
+        Per the app's bit-packing in CMD 11 response [0]:
+            h[0] = response length flag
+            h[1] = net_mode (bits 0-3) | wifi_state (bits 4-5) | wifi_rssi (bits 6-7)
+            h[2] = net_rssi (bits 0-5, scaled 0-31) | wan_state (bits 6-7)
+            h[3] = sim_present (bit 0) | net_version (bits 1-7)
+            h[4] = operator code (lookup in operatorsNums table)
+        """
+        data = await self._write_command(CMD_GET_NETWORK, [0x00])
+        if not data or len(data) < 5:
+            return NBPowerNetworkInfo()
+
+        h = data
+        net_mode = h[1] & 0x0F
+        wifi_state = (h[1] >> 4) & 0x03
+        wifi_rssi = (h[1] >> 6) & 0x03
+        net_rssi_raw = h[2] & 0x3F
+        net_rssi = round(5 * net_rssi_raw / 31) if net_rssi_raw else 0
+        wan_state = (h[2] >> 6) & 0x03
+        sim_present = bool(h[3] & 0x01)
+        net_version = h[3] >> 1
+        op_code = h[4]
+
+        # Operator: app maps op_code → name, but all entries are "LTE" in firmware data
+        operator = "LTE" if op_code else "-"
+
+        return NBPowerNetworkInfo(
+            wifi_state=wifi_state,
+            wifi_state_str=WIFI_STATE_NAMES.get(wifi_state, f"unknown_{wifi_state}"),
+            wifi_rssi_level=wifi_rssi,
+            has_4g=(net_mode != 15),
+            net_mode=net_mode,
+            net_mode_str=NET_MODE_NAMES.get(net_mode, f"unknown_{net_mode}"),
+            net_rssi=net_rssi,
+            net_sim_present=sim_present,
+            net_version=net_version,
+            operator=operator,
+            wan_state=wan_state,
+        )
+
+    async def get_totals(self) -> NBPowerTotals:
+        """CMD 43 — Get lifetime totals: number of sessions and total kWh.
+
+        Response layout (fw > 27):
+            p[0..1] = total charge count
+            p[2..5] = total kWh × 100 (big-endian, 32-bit)
+        """
+        data = await self._write_command(CMD_GET_TOTALS)
+        if not data or len(data) < 6:
+            return NBPowerTotals()
+
+        p = data
+        ver = self._device_version
+        total_count = p[0] << 8 | p[1]
+
+        if ver > 27:
+            # Big endian 32-bit value
+            total_kwh_raw = (p[2] << 24) | (p[3] << 16) | (p[4] << 8) | p[5]
+            total_kwh = round(total_kwh_raw / 100, 2)
+        else:
+            # Older firmware: high word and low word swapped
+            high = p[2] << 8 | p[3] if len(p) > 3 else 0
+            low = p[4] << 8 | p[5] if len(p) > 5 else 0
+            total_kwh = round((high * 65536 + low) / 100, 2)
+
+        return NBPowerTotals(
+            total_charge_count=total_count,
+            total_kwh=total_kwh,
+        )
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

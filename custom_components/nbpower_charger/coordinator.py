@@ -9,10 +9,21 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .nbpower_ble import NBPowerBLEClient, NBPowerStatus, NBPowerMeterData, NBPowerDeviceInfo
+from .nbpower_ble import (
+    NBPowerBLEClient,
+    NBPowerStatus,
+    NBPowerMeterData,
+    NBPowerDeviceInfo,
+    NBPowerLastSession,
+    NBPowerTotals,
+    NBPowerNetworkInfo,
+)
 from .const import DOMAIN, DEFAULT_MAX_AMPS
 
 _LOGGER = logging.getLogger(__name__)
+
+# Slow-changing data (last session, totals) — poll every N regular cycles
+SLOW_POLL_MULTIPLIER = 6  # at 5s interval → ~30s for slow data
 
 
 class NBPowerCoordinator(DataUpdateCoordinator):
@@ -37,26 +48,28 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         self.device_info: NBPowerDeviceInfo | None = None
         self._max_amps: float = DEFAULT_MAX_AMPS
         self._reconnect_lock = asyncio.Lock()
+        self._poll_counter: int = 0
+        # Cache slow-changing data between slow polls
+        self._cached_last_session: NBPowerLastSession = NBPowerLastSession()
+        self._cached_totals: NBPowerTotals = NBPowerTotals()
+        self._cached_network: NBPowerNetworkInfo = NBPowerNetworkInfo()
 
     # ── Connection management ──────────────────────────────────────────────────
 
     async def async_connect(self) -> None:
-        """Connect and fetch initial device info."""
         await self.client.connect(timeout=15.0)
         self.device_info = await self.client.get_device_info()
         _LOGGER.info(
-            "NBPower charger connected: %s (fw=%d, num=%d)",
+            "NBPower charger connected: %s (fw=%d, device_num=%d)",
             self.mac,
             self.device_info.firmware_version,
             self.device_info.device_num,
         )
 
     async def async_disconnect(self) -> None:
-        """Disconnect cleanly."""
         await self.client.disconnect()
 
     async def _ensure_connected(self) -> bool:
-        """Reconnect if needed. Returns True if connected."""
         if self.client.is_connected:
             return True
         async with self._reconnect_lock:
@@ -75,31 +88,48 @@ class NBPowerCoordinator(DataUpdateCoordinator):
     # ── Data polling ───────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch all data from the charger. Called by HA scheduler."""
         if not await self._ensure_connected():
             raise UpdateFailed("Bluetooth connection unavailable")
 
         try:
+            # Always poll fast-changing data
             status: NBPowerStatus = await self.client.get_status()
             meter: NBPowerMeterData = await self.client.get_meter_data()
             timing: dict = await self.client.get_charging_time()
+
+            # Slow data: last session + totals + network every Nth cycle
+            self._poll_counter += 1
+            if self._poll_counter % SLOW_POLL_MULTIPLIER == 1:
+                try:
+                    self._cached_last_session = await self.client.get_last_session()
+                except Exception as ex:
+                    _LOGGER.debug("get_last_session failed: %s", ex)
+                try:
+                    self._cached_totals = await self.client.get_totals()
+                except Exception as ex:
+                    _LOGGER.debug("get_totals failed: %s", ex)
+                try:
+                    self._cached_network = await self.client.get_network_info()
+                except Exception as ex:
+                    _LOGGER.debug("get_network_info failed: %s", ex)
 
             return {
                 "status": status,
                 "meter": meter,
                 "timing": timing,
+                "last_session": self._cached_last_session,
+                "totals": self._cached_totals,
+                "network": self._cached_network,
                 "available": True,
             }
         except Exception as ex:
             _LOGGER.error("Poll error: %s", ex)
-            # Mark as disconnected so next poll triggers reconnect
             self.client._connected = False
             raise UpdateFailed(f"Error communicating with charger: {ex}") from ex
 
     # ── Control actions ────────────────────────────────────────────────────────
 
     async def async_start_charging(self, max_amps: float | None = None) -> bool:
-        """Start charging. Uses configured max_amps if not specified."""
         if not await self._ensure_connected():
             _LOGGER.error("Cannot start charging: not connected")
             return False
@@ -110,7 +140,6 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         return result
 
     async def async_stop_charging(self) -> bool:
-        """Stop charging."""
         if not await self._ensure_connected():
             _LOGGER.error("Cannot stop charging: not connected")
             return False
@@ -120,7 +149,6 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         return result
 
     async def async_set_max_amps(self, amps: float) -> None:
-        """Update the default max current setting."""
         self._max_amps = max(6.0, min(32.0, amps))
 
     # ── Helpers ────────────────────────────────────────────────────────────────
