@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NBPower EV Charger",
+        "description": "Enter the MAC address of your charger. Find it in the NBPowen app or via nRF Connect.",
+        "data": {
+          "mac": "MAC Address (XX:XX:XX:XX:XX:XX)",
+          "name": "Device Name",
+          "scan_interval": "Poll interval (seconds)",
+          "max_amps": "Maximum current (A)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect. Check the MAC address and make sure the charger is powered on and nearby.",
+      "invalid_mac": "Invalid MAC address format. Example: AA:BB:CC:DD:EE:FF",
+      "no_devices_found": "No devices found. Power on the charger and make sure Bluetooth is enabled.",
+      "unknown": "Unknown error."
+    },
+    "abort": {
+      "already_configured": "This device is already configured in Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NBPower Charger Settings",
+        "data": {
+          "scan_interval": "Poll interval (seconds)",
+          "max_amps": "Default maximum current (A)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NBPower EV Зарядное устройство",
+        "description": "Введите MAC-адрес вашего зарядного. Его можно найти в приложении NBPowen или через nRF Connect.",
+        "data": {
+          "mac": "MAC-адрес (XX:XX:XX:XX:XX:XX)",
+          "name": "Название устройства",
+          "scan_interval": "Интервал опроса (секунды)",
+          "max_amps": "Максимальный ток (А)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться. Проверьте MAC-адрес и убедитесь, что зарядное включено и рядом.",
+      "invalid_mac": "Неверный формат MAC-адреса. Пример: AA:BB:CC:DD:EE:FF",
+      "no_devices_found": "Устройства не найдены. Включите зарядное и убедитесь, что Bluetooth активен.",
+      "unknown": "Неизвестная ошибка."
+    },
+    "abort": {
+      "already_configured": "Это устройство уже добавлено в Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Настройки NBPower Charger",
+        "data": {
+          "scan_interval": "Интервал опроса (секунды)",
+          "max_amps": "Максимальный ток по умолчанию (А)"
+        }
+      }
+    }
+  }
+}

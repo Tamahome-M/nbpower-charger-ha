@@ -1,0 +1,8 @@
+{
+  "name": "NBPower EV Charger (BLE)",
+  "render_readme": true,
+  "homeassistant": "2023.8.0",
+  "country": ["RU", "BY", "KZ", "UA", "PL", "DE", "US", "GB", "FR", "IT", "ES", "CN", "JP"],
+  "iot_class": "local_polling",
+  "domains": ["sensor", "switch", "number"]
+}
