@@ -1,25 +1,40 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
-      "user": {
-        "title": "NBPower EV Charger",
+      "bluetooth_confirm": {
+        "title": "Add NBPower Charger",
+        "description": "Found device **{name}**\n\nMAC: `{mac}`\n\nConfirm to add it to Home Assistant.",
+        "data": {
+          "name": "Device Name",
+          "scan_interval": "Poll interval (seconds)"
+        }
+      },
+      "pick_device": {
+        "title": "Choose a charger",
+        "description": "Nearby NBPower devices were found. Pick one or enter a MAC address manually.",
+        "data": {
+          "mac": "Device"
+        }
+      },
+      "manual": {
+        "title": "Add NBPower Charger manually",
         "description": "Enter the MAC address of your charger. Find it in the NBPowen app or via nRF Connect.",
         "data": {
           "mac": "MAC Address (XX:XX:XX:XX:XX:XX)",
           "name": "Device Name",
-          "scan_interval": "Poll interval (seconds)",
-          "max_amps": "Maximum current (A)"
+          "scan_interval": "Poll interval (seconds)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect. Check the MAC address and make sure the charger is powered on and nearby.",
+      "cannot_connect": "Unable to connect. Check the MAC address and make sure the charger is powered on.",
       "invalid_mac": "Invalid MAC address format. Example: AA:BB:CC:DD:EE:FF",
-      "no_devices_found": "No devices found. Power on the charger and make sure Bluetooth is enabled.",
+      "no_devices_found": "No devices found.",
       "unknown": "Unknown error."
     },
     "abort": {
-      "already_configured": "This device is already configured in Home Assistant."
+      "already_configured": "This device is already configured."
     }
   },
   "options": {

@@ -1,6 +1,12 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [1.0.1] - 2025-XX-XX
+
+### Fixed
+- Config flow: when adding a Bluetooth-discovered charger, MAC is now auto-populated (was empty)
+- Removed `max_amps` from initial config flow — it's now only in Options (default 16 A)
+- Added separate steps for Bluetooth confirmation, picking from discovered devices, and manual MAC entry
+- Improved translations for new flow steps
 
 ## [1.0.0] - 2025-XX-XX
 
@@ -16,9 +22,3 @@ All notable changes to this project will be documented in this file.
 - Russian and English translations
 - Standalone debug script (`scripts/nbpower_debug.py`)
 - Tested with firmware v45, device_num=31 (AC charger)
-
-### Protocol Details
-- Auth challenge mechanism for charge start (CMD 66 → CMD 67)
-- Polling-mode reads from same characteristic as writes (FFD1)
-- 20ms minimum delay between BLE writes
-- Support for both write-with-response and write-without-response modes

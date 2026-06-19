@@ -1,11 +1,13 @@
 {
   "domain": "nbpower_charger",
   "name": "NBPower EV Charger (BLE)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "config_flow": true,
   "documentation": "https://github.com/Tamahome-M/nbpower-charger-ha",
   "issue_tracker": "https://github.com/Tamahome-M/nbpower-charger-ha/issues",
-  "requirements": ["bleak>=0.21.1"],
+  "requirements": [
+    "bleak>=0.21.1"
+  ],
   "bluetooth": [
     {
       "connectable": true,
@@ -16,8 +18,12 @@
       "local_name": "NBPower*"
     }
   ],
-  "dependencies": ["bluetooth"],
-  "codeowners": ["@Tamahome-M"],
+  "dependencies": [
+    "bluetooth"
+  ],
+  "codeowners": [
+    "@Tamahome-M"
+  ],
   "iot_class": "local_polling",
   "integration_type": "device"
 }

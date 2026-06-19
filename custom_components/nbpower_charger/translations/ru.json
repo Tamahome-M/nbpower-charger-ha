@@ -1,25 +1,40 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
-      "user": {
-        "title": "NBPower EV Зарядное устройство",
-        "description": "Введите MAC-адрес вашего зарядного. Его можно найти в приложении NBPowen или через nRF Connect.",
+      "bluetooth_confirm": {
+        "title": "Добавить NBPower зарядное",
+        "description": "Найдено устройство **{name}**\n\nMAC: `{mac}`\n\nПодтвердите добавление в Home Assistant.",
+        "data": {
+          "name": "Название устройства",
+          "scan_interval": "Интервал опроса (секунды)"
+        }
+      },
+      "pick_device": {
+        "title": "Выберите зарядное устройство",
+        "description": "Поблизости найдены NBPower устройства. Выберите одно из них или введите MAC-адрес вручную.",
+        "data": {
+          "mac": "Устройство"
+        }
+      },
+      "manual": {
+        "title": "Добавить NBPower зарядное вручную",
+        "description": "Введите MAC-адрес вашего зарядного устройства. Найти его можно в приложении NBPowen или через nRF Connect.",
         "data": {
           "mac": "MAC-адрес (XX:XX:XX:XX:XX:XX)",
           "name": "Название устройства",
-          "scan_interval": "Интервал опроса (секунды)",
-          "max_amps": "Максимальный ток (А)"
+          "scan_interval": "Интервал опроса (секунды)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Не удалось подключиться. Проверьте MAC-адрес и убедитесь, что зарядное включено и рядом.",
+      "cannot_connect": "Не удалось подключиться. Проверьте MAC-адрес и убедитесь, что зарядное включено.",
       "invalid_mac": "Неверный формат MAC-адреса. Пример: AA:BB:CC:DD:EE:FF",
-      "no_devices_found": "Устройства не найдены. Включите зарядное и убедитесь, что Bluetooth активен.",
+      "no_devices_found": "Устройства не найдены.",
       "unknown": "Неизвестная ошибка."
     },
     "abort": {
-      "already_configured": "Это устройство уже добавлено в Home Assistant."
+      "already_configured": "Это устройство уже добавлено."
     }
   },
   "options": {
