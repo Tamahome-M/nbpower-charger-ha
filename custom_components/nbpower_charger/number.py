@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, DEFAULT_MAX_AMPS
+from .const import DOMAIN, CONF_MAX_AMPS
 from .coordinator import NBPowerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ async def async_setup_entry(
 
 
 class NBPowerMaxCurrentNumber(CoordinatorEntity[NBPowerCoordinator], NumberEntity):
-    """Slider to set the maximum charging current (6–32 A)."""
+    """Slider to set the maximum charging current (6–HW_MAX A, step 0.5)."""
 
     _attr_has_entity_name = True
     _attr_name = "Максимальный ток"
@@ -37,8 +37,7 @@ class NBPowerMaxCurrentNumber(CoordinatorEntity[NBPowerCoordinator], NumberEntit
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_mode = NumberMode.SLIDER
     _attr_native_min_value = 6.0
-    _attr_native_max_value = 32.0
-    _attr_native_step = 1.0
+    _attr_native_step = 0.5
 
     def __init__(
         self,
@@ -64,15 +63,28 @@ class NBPowerMaxCurrentNumber(CoordinatorEntity[NBPowerCoordinator], NumberEntit
         )
 
     @property
+    def native_max_value(self) -> float:
+        """Use the actual hardware limit reported by the charger."""
+        return self.coordinator.hw_max_amps
+
+    @property
     def native_value(self) -> float:
         return self.coordinator.max_amps
 
     async def async_set_native_value(self, value: float) -> None:
-        """Update max charging current."""
-        await self.coordinator.async_set_max_amps(value)
-        _LOGGER.info("Max charging current set to %.0f A", value)
-        # If currently charging, apply immediately by restarting
+        """User changed the slider — save and (if charging) apply immediately."""
+        await self.coordinator.async_set_max_amps(value, explicit=True)
+        _LOGGER.info("Max charging current set to %.1f A", value)
+
+        # Persist in config entry options so it survives restarts
+        new_options = {**self._entry.options, CONF_MAX_AMPS: value}
+        self.hass.config_entries.async_update_entry(
+            self._entry, options=new_options
+        )
+
+        # If currently charging, apply the new limit immediately
         if self.coordinator.is_charging:
             _LOGGER.info("Restarting charge session with new current limit")
             await self.coordinator.async_stop_charging()
             await self.coordinator.async_start_charging(max_amps=value)
+        self.async_write_ha_state()

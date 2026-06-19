@@ -17,6 +17,7 @@ from .nbpower_ble import (
     NBPowerLastSession,
     NBPowerTotals,
     NBPowerNetworkInfo,
+    NBPowerChargerConfig,
 )
 from .const import DOMAIN, DEFAULT_MAX_AMPS
 
@@ -46,7 +47,9 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         self.charger_name = name
         self.client = NBPowerBLEClient(mac)
         self.device_info: NBPowerDeviceInfo | None = None
+        self.charger_config: NBPowerChargerConfig = NBPowerChargerConfig()
         self._max_amps: float = DEFAULT_MAX_AMPS
+        self._max_amps_explicitly_set: bool = False
         self._reconnect_lock = asyncio.Lock()
         self._poll_counter: int = 0
         # Cache slow-changing data between slow polls
@@ -59,6 +62,29 @@ class NBPowerCoordinator(DataUpdateCoordinator):
     async def async_connect(self) -> None:
         await self.client.connect(timeout=15.0)
         self.device_info = await self.client.get_device_info()
+        # Read static configuration (hardware max amps + frequency)
+        try:
+            self.charger_config = await self.client.get_charger_config()
+            _LOGGER.info(
+                "Charger config: hw_max_amps=%s, %s Hz",
+                self.charger_config.max_amps_hw,
+                "60" if self.charger_config.is_60hz else "50",
+            )
+        except Exception as ex:
+            _LOGGER.warning("Failed to read charger config (CMD 47): %s", ex)
+        # Read last session to seed max_amps from real-world usage
+        try:
+            last = await self.client.get_last_session()
+            self._cached_last_session = last
+            if not self._max_amps_explicitly_set and last.requested_amps > 0:
+                self._max_amps = last.requested_amps
+                _LOGGER.info(
+                    "Initial max_amps seeded from last session: %.1f A",
+                    self._max_amps,
+                )
+        except Exception as ex:
+            _LOGGER.debug("Failed to read last session: %s", ex)
+
         _LOGGER.info(
             "NBPower charger connected: %s (fw=%d, device_num=%d)",
             self.mac,
@@ -148,8 +174,17 @@ class NBPowerCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         return result
 
-    async def async_set_max_amps(self, amps: float) -> None:
-        self._max_amps = max(6.0, min(32.0, amps))
+    async def async_set_max_amps(self, amps: float, *, explicit: bool = True) -> None:
+        """Set the max charging current (next session).
+
+        Args:
+            amps: Target current in Amperes.
+            explicit: True when set by user/UI; False for internal seeding from device.
+        """
+        hw_max = self.charger_config.max_amps_hw or 32.0
+        self._max_amps = max(6.0, min(hw_max, float(amps)))
+        if explicit:
+            self._max_amps_explicitly_set = True
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -168,3 +203,8 @@ class NBPowerCoordinator(DataUpdateCoordinator):
     @property
     def max_amps(self) -> float:
         return self._max_amps
+
+    @property
+    def hw_max_amps(self) -> float:
+        """Physical hardware maximum current (from CMD 47)."""
+        return self.charger_config.max_amps_hw or 32.0

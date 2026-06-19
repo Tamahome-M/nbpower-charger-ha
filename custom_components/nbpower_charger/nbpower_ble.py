@@ -173,6 +173,13 @@ class NBPowerNetworkInfo:
     wan_state: int = 0               # 0-3
 
 
+@dataclass
+class NBPowerChargerConfig:
+    """Static charger configuration from CMD 47."""
+    max_amps_hw: float = 32.0       # Hardware-supported maximum current (A)
+    is_60hz: bool = False           # True = 60Hz mains, False = 50Hz
+
+
 class NBPowerBLEClient:
     """Async BLE client for NBPower / NBPowen EV charger.
 
@@ -545,6 +552,25 @@ class NBPowerBLEClient:
             "elapsed_minutes": elapsed,
             "remaining_minutes": remaining,
         }
+
+    async def get_charger_config(self) -> NBPowerChargerConfig:
+        """CMD 47 — Get static charger configuration.
+
+        Response layout (per app):
+            n[0]    = packed flags, bit 7 = 50/60Hz indicator
+            n[10]   = max amps supported by hardware (capped at 50)
+        """
+        data = await self._write_command(CMD_GET_MAXAMP)
+        if not data or len(data) < 11:
+            return NBPowerChargerConfig()
+
+        n = data
+        max_amps = float(min(n[10] or 32, 50))
+        is_60hz = bool((n[0] >> 7) & 1)
+        return NBPowerChargerConfig(
+            max_amps_hw=max_amps,
+            is_60hz=is_60hz,
+        )
 
     async def get_last_session(self) -> NBPowerLastSession:
         """CMD 50 — Get information about the last charging session.

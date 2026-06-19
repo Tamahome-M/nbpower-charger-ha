@@ -31,8 +31,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         scan_interval=scan_interval,
     )
 
-    max_amps = entry.options.get(CONF_MAX_AMPS, entry.data.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS))
-    await coordinator.async_set_max_amps(float(max_amps))
+    # Only apply max_amps as explicit if user has set it via Options.
+    # If config_entry has no user-set max_amps, leave coordinator default;
+    # async_connect() will seed it from last_session.requested_amps automatically.
+    explicit_max_amps = entry.options.get(CONF_MAX_AMPS)
+    if explicit_max_amps is not None:
+        await coordinator.async_set_max_amps(float(explicit_max_amps), explicit=True)
 
     try:
         await coordinator.async_connect()
@@ -64,5 +68,27 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Handle options update.
+
+    Reload the integration only when scan_interval changes
+    (max_amps changes are applied live by the number entity).
+    """
+    coordinator: NBPowerCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+
+    new_interval = entry.options.get(
+        CONF_SCAN_INTERVAL,
+        entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+    )
+    current_interval = coordinator.update_interval.total_seconds() if coordinator.update_interval else None
+
+    # Sync max_amps from options (e.g. when set via Options flow rather than slider)
+    new_max_amps = entry.options.get(CONF_MAX_AMPS)
+    if new_max_amps is not None:
+        await coordinator.async_set_max_amps(float(new_max_amps), explicit=True)
+
+    # Only do a full reload when the scan interval changes
+    if current_interval != new_interval:
+        await hass.config_entries.async_reload(entry.entry_id)
