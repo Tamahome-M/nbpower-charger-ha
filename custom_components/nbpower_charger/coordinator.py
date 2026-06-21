@@ -224,6 +224,30 @@ class NBPowerCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         return result
 
+    async def async_change_password(self, old_pwd: str, new_pwd: str) -> bool:
+        """Change the device PIN."""
+        if not await self._ensure_connected():
+            return False
+        return await self.client.change_password(old_pwd, new_pwd)
+
+    async def async_reboot(self) -> bool:
+        """Reboot the charger."""
+        if not await self._ensure_connected():
+            return False
+        return await self.client.reboot()
+
+    async def async_reset_total_energy(self) -> bool:
+        """Reset the lifetime energy counter."""
+        if not await self._ensure_connected():
+            return False
+        return await self.client.reset_total_energy()
+
+    async def async_configure_wifi(self, ssid: str, password: str) -> bool:
+        """Configure the charger's WiFi."""
+        if not await self._ensure_connected():
+            return False
+        return await self.client.wifi_configure(ssid, password)
+
     @property
     def run_mode(self) -> int:
         return self.charger_config.run_mode

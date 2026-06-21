@@ -50,11 +50,15 @@ CMD_GET_METER     = 0x08
 CMD_GET_NETWORK   = 0x0B
 CMD_REBOOT        = 0x10
 CMD_GET_TOTALS    = 0x2B   # CMD 43 — total times charged + total kWh
+CMD_RESET_TOTAL   = 0x2C   # CMD 44 — reset total energy counter
 CMD_VERIFY_PWD    = 0x29   # CMD 41 — verify device PIN (BLE: 6 ASCII bytes)
 CMD_GET_CONFIG    = 0x2F   # CMD 47 — read full config (run mode, temps, max amps)
 CMD_GET_MAXAMP    = 0x2F   # alias (same command)
 CMD_SET_CONFIG    = 0x30   # CMD 48 — write full config
 CMD_HEARTBEAT     = 0x31
+CMD_CHANGE_PWD    = 0x33   # CMD 51 — change device PIN (old 6 + new 6 bytes)
+CMD_SET_FUNCS     = 0x36   # CMD 54 — set device function flags (1 byte bitmask)
+CMD_WIFI          = 0x51   # CMD 81 — WiFi scan / config
 CMD_GET_LAST      = 0x32   # CMD 50 — last charge session info
 CMD_GET_AUTH      = 0x42
 CMD_START_CHARGE  = 0x43
@@ -885,6 +889,110 @@ class NBPowerBLEClient:
             total_charge_count=total_count,
             total_kwh=total_kwh,
         )
+
+    # ── Password change ──────────────────────────────────────────────────────────
+
+    async def change_password(self, old_password: str, new_password: str) -> bool:
+        """CMD 51 — Change the device PIN.
+
+        Sends [old 6 ASCII bytes][new 6 ASCII bytes]. Both padded with '0' to 6.
+        Response byte[0] == 1 → success.
+        """
+        old_p = (old_password[:6] + "000000")[:6]
+        new_p = (new_password[:6] + "000000")[:6]
+        params = [ord(c) for c in old_p] + [ord(c) for c in new_p]
+
+        data = await self._write_command(CMD_CHANGE_PWD, params)
+        if not data:
+            return False
+        success = data[0] == 1
+        if success:
+            # Update stored password and invalidate cache
+            self._password = new_p
+            self._pwd_verified_at = 0.0
+            _LOGGER.info("Password changed successfully")
+        else:
+            _LOGGER.warning("Password change failed (byte[0]=%d)", data[0])
+        return success
+
+    # ── Device control ──────────────────────────────────────────────────────────
+
+    async def reboot(self) -> bool:
+        """CMD 16 — Reboot the charger. Requires PIN."""
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot reboot: password verification failed")
+            return False
+        data = await self._write_command(CMD_REBOOT)
+        _LOGGER.info("Reboot command sent")
+        return bool(data)
+
+    async def reset_total_energy(self) -> bool:
+        """CMD 44 — Reset the lifetime total energy counter. Requires PIN."""
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot reset totals: password verification failed")
+            return False
+        data = await self._write_command(CMD_RESET_TOTAL)
+        if not data:
+            return False
+        success = data[0] == 1
+        _LOGGER.info("Reset total energy: %s", "OK" if success else "FAILED")
+        return success
+
+    # ── WiFi configuration ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _str_to_utf8_bytes(s: str) -> list[int]:
+        """Encode a string to UTF-8 byte list (matches app's strToUtf8Bytes)."""
+        return list(s.encode("utf-8"))
+
+    @staticmethod
+    def _utf8_bytes_to_str(data: bytes) -> str:
+        """Decode UTF-8 bytes to string, ignoring errors."""
+        try:
+            return data.decode("utf-8", errors="ignore")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    async def wifi_scan(self) -> str | None:
+        """CMD 81 sub 5 — Trigger WiFi scan, return the currently saved SSID if any."""
+        if not await self._ensure_password():
+            return None
+        await self._write_command(CMD_WIFI, [5])
+        await asyncio.sleep(0.1)
+        data = await self._write_command(CMD_WIFI, [5])
+        if data and len(data) >= 2 and data[0] == 5 and data[1]:
+            ssid_len = data[1]
+            ssid = self._utf8_bytes_to_str(bytes(data[2:2 + ssid_len]))
+            return ssid
+        return None
+
+    async def wifi_configure(self, ssid: str, password: str) -> bool:
+        """CMD 81 — Configure WiFi SSID and password.
+
+        Per app's submitWifiSetting:
+            sub 3 = set SSID  [3, len, ...ssid_bytes]
+            sub 4 = set password [4, len, ...pwd_bytes]
+        SSID and password are limited to 16 UTF-8 bytes each.
+        Requires PIN.
+        """
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot configure WiFi: password verification failed")
+            return False
+
+        ssid_bytes = self._str_to_utf8_bytes(ssid)
+        pwd_bytes = self._str_to_utf8_bytes(password)
+        if len(ssid_bytes) > 16 or len(pwd_bytes) > 16:
+            _LOGGER.error("WiFi SSID/password too long (max 16 UTF-8 bytes each)")
+            return False
+
+        # Set SSID
+        await self._write_command(CMD_WIFI, [3, len(ssid_bytes)] + ssid_bytes)
+        await asyncio.sleep(0.03)
+        # Set password
+        await self._write_command(CMD_WIFI, [4, len(pwd_bytes)] + pwd_bytes)
+        await asyncio.sleep(0.1)
+        _LOGGER.info("WiFi configured: SSID=%s", ssid)
+        return True
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

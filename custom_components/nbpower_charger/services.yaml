@@ -1,0 +1,80 @@
+change_password:
+  name: Сменить пароль (PIN)
+  description: Изменить PIN-код зарядного устройства. Новый пароль до 6 символов.
+  fields:
+    device_id:
+      name: Устройство
+      description: Зарядное устройство NBPower
+      required: true
+      selector:
+        device:
+          integration: nbpower_charger
+    old_password:
+      name: Старый пароль
+      description: Текущий PIN (по умолчанию 000000)
+      required: true
+      example: "000000"
+      selector:
+        text:
+          type: password
+    new_password:
+      name: Новый пароль
+      description: Новый PIN (до 6 цифр)
+      required: true
+      example: "123456"
+      selector:
+        text:
+          type: password
+
+configure_wifi:
+  name: Настроить WiFi
+  description: Задать SSID и пароль WiFi-сети для зарядного (до 16 символов каждое).
+  fields:
+    device_id:
+      name: Устройство
+      description: Зарядное устройство NBPower
+      required: true
+      selector:
+        device:
+          integration: nbpower_charger
+    ssid:
+      name: SSID
+      description: Имя WiFi-сети
+      required: true
+      example: "MyHomeWiFi"
+      selector:
+        text:
+    password:
+      name: Пароль WiFi
+      description: Пароль WiFi-сети
+      required: true
+      example: "wifipassword"
+      selector:
+        text:
+          type: password
+
+set_run_mode:
+  name: Режим работы
+  description: Установить режим работы зарядного устройства.
+  fields:
+    device_id:
+      name: Устройство
+      description: Зарядное устройство NBPower
+      required: true
+      selector:
+        device:
+          integration: nbpower_charger
+    mode:
+      name: Режим
+      description: 0 = управление из приложения, 1 = зарядка с вилки, 2 = запуск ключом
+      required: true
+      example: "1"
+      selector:
+        select:
+          options:
+            - label: "Управление из приложения"
+              value: "0"
+            - label: "Зарядка с вилки (авто)"
+              value: "1"
+            - label: "Запуск ключом"
+              value: "2"

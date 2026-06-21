@@ -504,6 +504,54 @@ class NBPowerDebug:
                 print(f"  ❌ Ошибка установки (byte[0]={d[0]}). Raw: {d.hex()}")
         print()
 
+    async def change_password(self, old_pwd: str, new_pwd: str):
+        """CMD 51 — Change device PIN."""
+        print(f"=== CMD 51: Смена пароля {old_pwd} → {new_pwd} ===")
+        old_p = (old_pwd[:6] + "000000")[:6]
+        new_p = (new_pwd[:6] + "000000")[:6]
+        params = [ord(c) for c in old_p] + [ord(c) for c in new_p]
+        d = await self.send(0x33, params)
+        if d:
+            if d[0] == 1:
+                print(f"  ✅ Пароль изменён! Raw: {d.hex()}")
+            else:
+                print(f"  ❌ Ошибка смены (byte[0]={d[0]}). Raw: {d.hex()}")
+        print()
+
+    async def configure_wifi(self, ssid: str, wifi_pwd: str, pwd: str = "000000"):
+        """CMD 81 — Configure WiFi."""
+        print(f"=== CMD 81: Настройка WiFi (SSID='{ssid}') ===")
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — отмена")
+            print()
+            return
+        print("  ✅ Пароль OK")
+        ssid_bytes = list(ssid.encode("utf-8"))
+        pwd_bytes = list(wifi_pwd.encode("utf-8"))
+        if len(ssid_bytes) > 16 or len(pwd_bytes) > 16:
+            print("  ❌ SSID или пароль длиннее 16 байт")
+            print()
+            return
+        await self.send(0x51, [3, len(ssid_bytes)] + ssid_bytes)
+        await asyncio.sleep(0.03)
+        await self.send(0x51, [4, len(pwd_bytes)] + pwd_bytes)
+        print(f"  ✅ WiFi настроен (SSID={ssid})")
+        print()
+
+    async def reboot(self, pwd: str = "000000"):
+        """CMD 16 — Reboot device."""
+        print("=== CMD 16: Перезагрузка ===")
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — отмена")
+            print()
+            return
+        print("  ✅ Пароль OK")
+        await self.send(0x10)
+        print("  ✅ Команда перезагрузки отправлена")
+        print()
+
     async def disconnect(self):
         if self.client and self.client.is_connected:
             await self.client.disconnect()
@@ -557,6 +605,11 @@ async def main():
                         help="Прочитать конфигурацию устройства (CMD 47)")
     parser.add_argument("--set-mode", type=int, choices=[0, 1, 2], metavar="MODE",
                         help="Установить режим: 0=приложение, 1=зарядка с вилки, 2=ключ")
+    parser.add_argument("--change-pwd", nargs=2, metavar=("OLD", "NEW"),
+                        help="Сменить пароль: --change-pwd 000000 123456")
+    parser.add_argument("--set-wifi", nargs=2, metavar=("SSID", "WIFIPWD"),
+                        help="Настроить WiFi: --set-wifi MyНетwork mywifipass")
+    parser.add_argument("--reboot", action="store_true", help="Перезагрузить устройство")
 
     args = parser.parse_args()
 
@@ -583,6 +636,12 @@ async def main():
             await dbg.set_run_mode(args.set_mode, pwd=args.pwd)
             await asyncio.sleep(1)
             await dbg.get_config(pwd=args.pwd)
+        elif args.change_pwd:
+            await dbg.change_password(args.change_pwd[0], args.change_pwd[1])
+        elif args.set_wifi:
+            await dbg.configure_wifi(args.set_wifi[0], args.set_wifi[1], pwd=args.pwd)
+        elif args.reboot:
+            await dbg.reboot(pwd=args.pwd)
         elif args.start:
             await dbg.start_charging(amps=args.amps, minutes=args.minutes, pwd=args.pwd)
             await asyncio.sleep(1)

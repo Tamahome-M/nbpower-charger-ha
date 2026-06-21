@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0]
+
+### Added — full feature parity with the app
+- **Change PIN** service (`nbpower_charger.change_password`) — CMD 51
+- **Configure WiFi** service (`nbpower_charger.configure_wifi`) — set SSID + password, CMD 81
+- **Set run mode** service (`nbpower_charger.set_run_mode`) — alternative to the select entity
+- **Reboot** button — CMD 16
+- **Reset total energy counter** button (hidden by default) — CMD 44
+- Debug script: `--change-pwd`, `--set-wifi`, `--reboot` commands
+- All new services are PIN-protected and resolve the target via the HA device picker
+
+### Notes
+This release aims for full Bluetooth feature parity with the NBPowen app. Remaining app-only items are factory/calibration commands (CMD 7), IC-card management (CMD 253), and DC/BMS telemetry (CMD 145/146) which are niche and hardware-specific.
+
 ## [1.6.0]
 
 ### Added

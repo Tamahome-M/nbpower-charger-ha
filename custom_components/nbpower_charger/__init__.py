@@ -3,16 +3,54 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MAC, CONF_NAME, CONF_SCAN_INTERVAL, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, DEFAULT_MAX_AMPS, CONF_MAX_AMPS, CONF_PASSWORD, DEFAULT_PASSWORD
 from .coordinator import NBPowerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.SELECT, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.SELECT, Platform.BINARY_SENSOR, Platform.BUTTON]
+
+# ── Service schemas ────────────────────────────────────────────────────────────
+SERVICE_CHANGE_PASSWORD = "change_password"
+SERVICE_CONFIGURE_WIFI = "configure_wifi"
+SERVICE_SET_RUN_MODE = "set_run_mode"
+
+CHANGE_PASSWORD_SCHEMA = vol.Schema({
+    vol.Required("device_id"): cv.string,
+    vol.Required("old_password"): cv.string,
+    vol.Required("new_password"): cv.string,
+})
+
+CONFIGURE_WIFI_SCHEMA = vol.Schema({
+    vol.Required("device_id"): cv.string,
+    vol.Required("ssid"): cv.string,
+    vol.Required("password"): cv.string,
+})
+
+SET_RUN_MODE_SCHEMA = vol.Schema({
+    vol.Required("device_id"): cv.string,
+    vol.Required("mode"): vol.In(["0", "1", "2", 0, 1, 2]),
+})
+
+
+def _coordinator_from_device(hass: HomeAssistant, device_id: str) -> NBPowerCoordinator:
+    """Resolve a coordinator from a HA device_id."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get(device_id)
+    if device is None:
+        raise HomeAssistantError(f"Device {device_id} not found")
+    for entry_id in device.config_entries:
+        coord = hass.data.get(DOMAIN, {}).get(entry_id)
+        if coord is not None:
+            return coord
+    raise HomeAssistantError("NBPower coordinator not found for device")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -56,7 +94,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # Register services once (first config entry)
+    _async_register_services(hass)
+
     return True
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register integration-level services (idempotent)."""
+    if hass.services.has_service(DOMAIN, SERVICE_CHANGE_PASSWORD):
+        return
+
+    async def _handle_change_password(call: ServiceCall) -> None:
+        coord = _coordinator_from_device(hass, call.data["device_id"])
+        ok = await coord.async_change_password(
+            call.data["old_password"], call.data["new_password"]
+        )
+        if not ok:
+            raise HomeAssistantError("Не удалось сменить пароль (проверьте старый PIN)")
+
+    async def _handle_configure_wifi(call: ServiceCall) -> None:
+        coord = _coordinator_from_device(hass, call.data["device_id"])
+        ok = await coord.async_configure_wifi(call.data["ssid"], call.data["password"])
+        if not ok:
+            raise HomeAssistantError("Не удалось настроить WiFi")
+
+    async def _handle_set_run_mode(call: ServiceCall) -> None:
+        coord = _coordinator_from_device(hass, call.data["device_id"])
+        mode = int(call.data["mode"])
+        ok = await coord.async_set_run_mode(mode)
+        if not ok:
+            raise HomeAssistantError("Не удалось установить режим (проверьте PIN)")
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_CHANGE_PASSWORD, _handle_change_password,
+        schema=CHANGE_PASSWORD_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CONFIGURE_WIFI, _handle_configure_wifi,
+        schema=CONFIGURE_WIFI_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_RUN_MODE, _handle_set_run_mode,
+        schema=SET_RUN_MODE_SCHEMA,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
