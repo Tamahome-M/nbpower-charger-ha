@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_MAC,
     CONF_NAME,
+    EntityCategory,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -76,6 +77,9 @@ NET_MODE_LABELS = {
 class NBPowerSensorDescription(SensorEntityDescription):
     """Extended sensor description with value extractor."""
     value_fn: Any = None
+    # When True, value_fn receives the coordinator instead of coordinator.data,
+    # and the sensor stays available even without a successful data poll.
+    uses_coordinator: bool = False
 
 
 SENSOR_DESCRIPTIONS: tuple[NBPowerSensorDescription, ...] = (
@@ -352,6 +356,18 @@ SENSOR_DESCRIPTIONS: tuple[NBPowerSensorDescription, ...] = (
         value_fn=lambda d: d["network"].operator,
         entity_registry_enabled_default=False,
     ),
+    # ── Bluetooth link ────────────────────────────────────────────────────────
+    NBPowerSensorDescription(
+        key="bluetooth_rssi",
+        name="Bluetooth сигнал",
+        native_unit_of_measurement="dBm",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:bluetooth-audio",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        uses_coordinator=True,
+        value_fn=lambda c: c.bluetooth_rssi,
+    ),
 )
 
 
@@ -401,6 +417,12 @@ class NBPowerSensor(CoordinatorEntity[NBPowerCoordinator], SensorEntity):
 
     @property
     def native_value(self):
+        # Sensors that read directly from the coordinator (e.g. Bluetooth RSSI)
+        if getattr(self.entity_description, "uses_coordinator", False):
+            try:
+                return self.entity_description.value_fn(self.coordinator)
+            except (KeyError, TypeError, IndexError, AttributeError):
+                return None
         if not self.coordinator.data:
             return None
         try:
@@ -410,4 +432,7 @@ class NBPowerSensor(CoordinatorEntity[NBPowerCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
+        # Coordinator-sourced sensors (RSSI) stay available even if a data poll fails
+        if getattr(self.entity_description, "uses_coordinator", False):
+            return True
         return self.coordinator.last_update_success and bool(self.coordinator.data)

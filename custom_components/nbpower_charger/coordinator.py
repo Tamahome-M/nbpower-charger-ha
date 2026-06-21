@@ -9,6 +9,11 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+try:
+    from homeassistant.components.bluetooth import async_last_service_info
+except ImportError:  # pragma: no cover
+    async_last_service_info = None
+
 from .nbpower_ble import (
     NBPowerBLEClient,
     NBPowerStatus,
@@ -222,6 +227,23 @@ class NBPowerCoordinator(DataUpdateCoordinator):
     @property
     def run_mode(self) -> int:
         return self.charger_config.run_mode
+
+    @property
+    def bluetooth_rssi(self) -> int | None:
+        """Current BLE signal strength (dBm) from the HA Bluetooth stack.
+
+        This reads the last advertisement seen by Home Assistant — it does not
+        require a request to the charger. Returns None if unavailable.
+        """
+        if async_last_service_info is None:
+            return None
+        try:
+            info = async_last_service_info(self.hass, self.mac, connectable=True)
+            if info is not None and info.rssi is not None:
+                return int(info.rssi)
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

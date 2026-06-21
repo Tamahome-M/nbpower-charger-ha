@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.0]
+
+### Added
+- **Bluetooth signal strength** sensor (dBm) — reads the BLE RSSI from the Home Assistant Bluetooth stack (no extra request to the charger). Useful for diagnosing connection quality and ESPHome proxy placement. Listed under diagnostics.
+
 ## [1.5.1]
 
 ### Fixed
