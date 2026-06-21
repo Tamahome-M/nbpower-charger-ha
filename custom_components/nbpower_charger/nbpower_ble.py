@@ -28,6 +28,11 @@ from bleak.backends.characteristic import BleakGATTCharacteristic
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class BLECommunicationError(Exception):
+    """Raised when the BLE device fails to respond or returns invalid data."""
+
+
 # ── Charge states (CMD 49, byte 0) ────────────────────────────────────────────
 CHARGE_STATES = {
     0: "unplugged",
@@ -342,17 +347,28 @@ class NBPowerBLEClient:
             # In polling mode, read response from the write characteristic
             if self._use_polling:
                 await asyncio.sleep(0.02)
+                got_any = False
                 for attempt in range(15):
                     try:
                         response = await self._client.read_gatt_char(self._write_char_uuid)
-                        if len(response) >= 2 and response[0] == cmd and response[1] == req_id:
-                            _LOGGER.debug("← poll [%02X %02X] %s", cmd, req_id, response[2:].hex())
-                            if not future.done():
-                                future.set_result(bytes(response[2:]))
-                            break
-                    except Exception:
+                        if len(response) >= 2:
+                            got_any = True
+                            if response[0] == cmd and response[1] == req_id:
+                                _LOGGER.debug("← poll [%02X %02X] %s",
+                                              cmd, req_id, response[2:].hex())
+                                if not future.done():
+                                    future.set_result(bytes(response[2:]))
+                                break
+                            else:
+                                # Stale data: a different command's response
+                                _LOGGER.debug("← poll stale [%02X %02X] (waiting for %02X %02X), retry",
+                                              response[0], response[1], cmd, req_id)
+                    except Exception as ex:
+                        _LOGGER.debug("polling read attempt %d failed: %s", attempt, ex)
                         break
                     await asyncio.sleep(0.05)
+                if not got_any:
+                    _LOGGER.debug("polling: no data read at all for CMD 0x%02X", cmd)
 
             try:
                 return await asyncio.wait_for(future, timeout=timeout)
@@ -383,7 +399,7 @@ class NBPowerBLEClient:
         """CMD 49 — Heartbeat: charge state, temperatures, current."""
         data = await self._write_command(CMD_HEARTBEAT, [0x01])
         if not data or len(data) < 4:
-            return NBPowerStatus()
+            raise BLECommunicationError("Heartbeat response too short or empty")
 
         def parse_temp(raw: int) -> float:
             return 255.0 if raw == 255 else float(raw - 40)
@@ -538,19 +554,37 @@ class NBPowerBLEClient:
         return bool(data)
 
     async def get_charging_time(self) -> dict:
-        """CMD 69 — Get charging time (elapsed and remaining minutes)."""
+        """CMD 69 — Get charging time.
+
+        Response layout (per app's syncChargingTime function):
+            data[0]    = charge state (>1 = charging)
+            data[1..2] = configured timer in minutes (65535 = unlimited)
+            data[3..4] = elapsed minutes since charge start
+            data[6..7] = remaining (countdown) minutes
+        """
         data = await self._write_command(CMD_SYNC_TIME)
-        if not data or len(data) < 4:
-            return {"is_charging": False, "elapsed_minutes": 0, "remaining_minutes": 0}
+        if not data or len(data) < 5:
+            return {
+                "is_charging": False,
+                "elapsed_minutes": 0,
+                "remaining_minutes": 0,
+                "configured_minutes": 0,
+            }
 
         is_charging = data[0] > 1
-        elapsed = (data[1] << 8 | data[2]) if len(data) > 2 else 0
+        configured = (data[1] << 8 | data[2]) if len(data) > 2 else 0
+        elapsed = (data[3] << 8 | data[4]) if len(data) > 4 else 0
         remaining = (data[6] << 8 | data[7]) if len(data) > 7 else 0
+
+        # 65535 = unlimited / no timer
+        if configured == 0xFFFF:
+            configured = 0
 
         return {
             "is_charging": is_charging,
             "elapsed_minutes": elapsed,
             "remaining_minutes": remaining,
+            "configured_minutes": configured,
         }
 
     async def get_charger_config(self) -> NBPowerChargerConfig:

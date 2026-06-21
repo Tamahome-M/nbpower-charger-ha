@@ -270,11 +270,16 @@ class NBPowerDebug:
     async def get_time(self):
         print("=== CMD 45: Время зарядки ===")
         d = await self.send(CMD_GET_TIME)
-        if d and len(d) >= 4:
+        if d and len(d) >= 5:
             is_charging = d[0] > 1
-            elapsed = (d[1] << 8 | d[2]) if len(d) > 2 else 0
+            configured = (d[1] << 8 | d[2]) if len(d) > 2 else 0
+            elapsed = (d[3] << 8 | d[4]) if len(d) > 4 else 0
             remaining = (d[6] << 8 | d[7]) if len(d) > 7 else 0
             print(f"  Идёт зарядка: {'Да' if is_charging else 'Нет'}")
+            if configured == 0xFFFF:
+                print(f"  Таймер:       без ограничения")
+            else:
+                print(f"  Таймер:       {configured} мин")
             print(f"  Прошло:       {elapsed} мин")
             print(f"  Осталось:     {remaining} мин")
             print(f"  Raw:          {d.hex()}")

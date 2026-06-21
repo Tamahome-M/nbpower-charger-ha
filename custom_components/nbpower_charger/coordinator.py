@@ -123,6 +123,12 @@ class NBPowerCoordinator(DataUpdateCoordinator):
             meter: NBPowerMeterData = await self.client.get_meter_data()
             timing: dict = await self.client.get_charging_time()
 
+            _LOGGER.debug(
+                "Status: charge_state=%d (%s), volt=%.1f, amp=%.2f, kwh=%.3f",
+                status.charge_state, status.charge_state_str,
+                meter.voltage, meter.current, meter.energy_kwh,
+            )
+
             # Slow data: last session + totals + network every Nth cycle
             self._poll_counter += 1
             if self._poll_counter % SLOW_POLL_MULTIPLIER == 1:
@@ -149,8 +155,10 @@ class NBPowerCoordinator(DataUpdateCoordinator):
                 "available": True,
             }
         except Exception as ex:
-            _LOGGER.error("Poll error: %s", ex)
+            _LOGGER.warning("Poll error: %s — keeping previous data", ex)
             self.client._connected = False
+            # HA's DataUpdateCoordinator preserves self.data when UpdateFailed is raised,
+            # so entities will show last good values until next successful poll.
             raise UpdateFailed(f"Error communicating with charger: {ex}") from ex
 
     # ── Control actions ────────────────────────────────────────────────────────

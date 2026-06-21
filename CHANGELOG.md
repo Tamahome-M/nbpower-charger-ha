@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.3]
+
+### Fixed
+- **Elapsed/remaining time parsing** (CMD 69): wrong byte offsets caused "Время зарядки" to show 65535 minutes (which is actually the *configured timer* meaning unlimited). Now correctly:
+  - `data[1..2]` → configured timer (new sensor "Установленный таймер")
+  - `data[3..4]` → elapsed minutes
+  - `data[6..7]` → remaining minutes (unchanged)
+
+### Added
+- "Установленный таймер" sensor (hidden by default) — shows the duration set when charging started, 0 = unlimited
+
+## [1.3.2]
+
+### Fixed
+- When CMD 49 (heartbeat) returns no/short response (BLE timeout, broken connection), entity values previously fell back to defaults (charge_state=0 → "Кабель не подключён"). Now they preserve the last known good values until the next successful poll.
+- Added detailed DEBUG logs of raw status (charge_state, voltage, current, kWh) for easier diagnostics. Enable with:
+  ```yaml
+  logger:
+    logs:
+      custom_components.nbpower_charger: debug
+  ```
+
+## [1.3.1]
+
+### Fixed
+- Voltage now displayed with 1 decimal (e.g. 241.1 V instead of 241 V)
+- Current displayed with 2 decimals, energy with 2-3 decimals — consistent precision across all electrical sensors
+
 ## [1.3.0]
 
 ### Fixed — max charging current behaviour
