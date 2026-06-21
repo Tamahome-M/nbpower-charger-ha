@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.5.1]
+
+### Fixed
+- **CMD 47 (read config) requires the device PIN** — without prior password verification the charger returns an empty response. Now `get_charger_config` verifies the PIN first (CMD 41), so run mode / max amps / temps read correctly.
+- Debug script: `--config` and `--set-mode` now verify the PIN (use `--pwd`).
+
+### Confirmed working (manual BLE test)
+- Start charging: PIN → challenge → token → CMD 67 → state changes to "charging" ✅
+- Stop charging: PIN → CMD 67 (minutes=0) → state changes to "standby" ✅
+
+## [1.5.0]
+
+### Added — run mode (plug-and-charge) control
+- New **"Режим работы"** select entity with three options:
+  - Управление из приложения (mobile control)
+  - **Зарядка с вилки (авто)** — charging starts automatically when the cable is plugged in
+  - Запуск ключом (key switch)
+- Reads/writes the full device config via CMD 47 (read) and CMD 48 (write), changing only the run-mode byte while preserving all other settings. Requires device PIN.
+- New binary sensors:
+  - "Зарядка с вилки включена" — whether plug-start mode is active
+  - "Идёт зарядка" (battery charging)
+  - "Кабель подключён" (plug)
+  - "Авто-возобновление" (hidden by default) — resume charging after power loss
+- Config (run mode, max amps, temps, auto-recharge) is now refreshed on each slow-poll cycle.
+- Debug script: `--config` to read configuration, `--set-mode {0,1,2}` to change run mode.
+
+## [1.4.0]
+
+### Added — device password (PIN) support
+- The charger verifies a device PIN (CMD 41) before allowing start/stop charging — confirmed by testing (correct PIN → accepted, wrong PIN → rejected).
+- New **"Пароль устройства (PIN)"** field in config flow (Bluetooth confirm + manual entry), default `000000`.
+- Password can be changed later via **Settings → Devices → NBPower → Configure** (Options), applied live without reload.
+- Password is verified before each charge start/stop, with a 9-second success cache (matching the NBPowen app behaviour).
+- Debug script: `--pwd PWD` flag for start/stop, plus corrected `--test-pwd` (BLE format = 6 raw ASCII bytes, no prefix byte).
+
+### Fixed
+- Password verify command format for BLE: send 6 ASCII bytes directly (the leading `1` byte is only for network/IMEI mode, not BLE).
+
 ## [1.3.3]
 
 ### Fixed

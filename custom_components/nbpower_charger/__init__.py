@@ -7,12 +7,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MAC, CONF_NAME, CONF_SCAN_INTERVAL, Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, DEFAULT_MAX_AMPS, CONF_MAX_AMPS
+from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, DEFAULT_MAX_AMPS, CONF_MAX_AMPS, CONF_PASSWORD, DEFAULT_PASSWORD
 from .coordinator import NBPowerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -23,12 +23,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_SCAN_INTERVAL,
         entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
+    password = entry.options.get(
+        CONF_PASSWORD,
+        entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+    )
 
     coordinator = NBPowerCoordinator(
         hass=hass,
         mac=mac,
         name=name,
         scan_interval=scan_interval,
+        password=password,
     )
 
     # Only apply max_amps as explicit if user has set it via Options.
@@ -88,6 +93,11 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     new_max_amps = entry.options.get(CONF_MAX_AMPS)
     if new_max_amps is not None:
         await coordinator.async_set_max_amps(float(new_max_amps), explicit=True)
+
+    # Sync password from options (live, no reload needed)
+    new_password = entry.options.get(CONF_PASSWORD)
+    if new_password is not None:
+        coordinator.set_password(new_password)
 
     # Only do a full reload when the scan interval changes
     if current_interval != new_interval:

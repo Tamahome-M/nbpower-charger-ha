@@ -50,7 +50,10 @@ CMD_GET_METER     = 0x08
 CMD_GET_NETWORK   = 0x0B
 CMD_REBOOT        = 0x10
 CMD_GET_TOTALS    = 0x2B   # CMD 43 — total times charged + total kWh
-CMD_GET_MAXAMP    = 0x2F   # CMD 47 — max amps and frequency
+CMD_VERIFY_PWD    = 0x29   # CMD 41 — verify device PIN (BLE: 6 ASCII bytes)
+CMD_GET_CONFIG    = 0x2F   # CMD 47 — read full config (run mode, temps, max amps)
+CMD_GET_MAXAMP    = 0x2F   # alias (same command)
+CMD_SET_CONFIG    = 0x30   # CMD 48 — write full config
 CMD_HEARTBEAT     = 0x31
 CMD_GET_LAST      = 0x32   # CMD 50 — last charge session info
 CMD_GET_AUTH      = 0x42
@@ -101,6 +104,13 @@ WIFI_STATE_NAMES = {
     1: "disconnected",   # Не подключено к WiFi
     2: "no_network",     # WiFi подключен, но нет сети (Интернета)
     3: "connected",      # Нормальное подключение
+}
+
+# ── Run modes (CMD 47/48 byte 4) ───────────────────────────────────────────────
+RUN_MODE_NAMES = {
+    0: "mobile_control",   # Запуск только из приложения
+    1: "plug_start",       # Зарядка автоматически при подключении вилки
+    2: "key_switch",       # Запуск физическим ключом/кнопкой
 }
 
 
@@ -183,6 +193,15 @@ class NBPowerChargerConfig:
     """Static charger configuration from CMD 47."""
     max_amps_hw: float = 32.0       # Hardware-supported maximum current (A)
     is_60hz: bool = False           # True = 60Hz mains, False = 50Hz
+    run_mode: int = 0               # 0=mobile, 1=plug_start, 2=key_switch
+    run_mode_str: str = "mobile_control"
+    auto_recharge: bool = False     # Resume charging after power loss
+    half_charge_temp: int = 0       # °C threshold to reduce power
+    pause_charge_temp: int = 0      # °C threshold to pause
+    recovery_charge_temp: int = 0   # °C threshold to resume
+    plug_mode_minutes: int = 0      # Duration for plug-start mode
+    plug_mode_amps: float = 0.0     # Current for plug-start mode
+    raw_config: bytes = b""         # Full raw CMD 47 response for re-saving
 
 
 class NBPowerBLEClient:
@@ -208,6 +227,9 @@ class NBPowerBLEClient:
         self._connected: bool = False
         self._last_write_ms: float = 0.0
         self._lock = asyncio.Lock()  # Serialize BLE writes
+        self._password: str = "000000"
+        self._pwd_verified_at: float = 0.0  # timestamp of last successful verify
+        self._pwd_cache_seconds: float = 9.0  # matches app's 9s cache
 
     # ── Connection ─────────────────────────────────────────────────────────────
 
@@ -495,6 +517,46 @@ class NBPowerBLEClient:
         token[5] = (sum(token[:5]) % 35) & 0xFF
         return token
 
+    def set_password(self, password: str) -> None:
+        """Set the device PIN used for protected commands (start/stop charge)."""
+        self._password = (password or "000000")[:6]
+        self._pwd_verified_at = 0.0  # force re-verification
+
+    async def verify_password(self, password: str | None = None) -> bool:
+        """CMD 41 — Verify device PIN.
+
+        BLE format: write [6 ASCII bytes] of the PIN, padded with '0' to 6 chars.
+        Response byte[0]: 1 = OK, 2 = locked (5 wrong tries), 0/other = wrong.
+
+        Returns True if accepted.
+        """
+        pwd = (password if password is not None else self._password)
+        pwd_padded = (pwd[:6] + "000000")[:6]
+        pwd_bytes = [ord(c) for c in pwd_padded]
+
+        data = await self._write_command(CMD_VERIFY_PWD, pwd_bytes)
+        if not data:
+            _LOGGER.warning("Password verify: no response")
+            return False
+
+        result = data[0]
+        if result in (1, 255):
+            self._pwd_verified_at = time.time()
+            _LOGGER.debug("Password accepted")
+            return True
+        if result == 2:
+            _LOGGER.error("Password locked: too many wrong attempts (5)")
+            return False
+        _LOGGER.warning("Password rejected (byte[0]=%d)", result)
+        return False
+
+    async def _ensure_password(self) -> bool:
+        """Verify password if cache expired. Returns True if authorized."""
+        now = time.time()
+        if now - self._pwd_verified_at < self._pwd_cache_seconds:
+            return True  # still cached
+        return await self.verify_password()
+
     async def start_charging(self, max_amps: float = 16.0,
                               minutes: int = 65535,
                               delay_minutes: int = 0) -> bool:
@@ -512,6 +574,11 @@ class NBPowerBLEClient:
         pwm = max(13, round(250 * max_amps / 60))
         minutes_hi = (minutes >> 8) & 0xFF
         minutes_lo = minutes & 0xFF
+
+        # Verify device PIN first (CMD 41), as the app does before CMD 67
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot start charging: password verification failed")
+            return False
 
         # Get auth challenge and compute real token
         challenge = await self._get_auth_challenge()
@@ -543,6 +610,11 @@ class NBPowerBLEClient:
         Same CMD 67 as start, but with minutes=0 and hardcoded token.
         Replicates startCharge(0) behavior from the app.
         """
+        # Verify device PIN first (CMD 41), as the app does before CMD 67
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot stop charging: password verification failed")
+            return False
+
         # Per app logic: when called with the 'recharge' flag, hardcoded token is used.
         # For stop (minutes=0), the simple token [1,1,1,1,1,0] works.
         params = [1, 1, 1, 1, 1, 0,    # hardcoded token
@@ -588,23 +660,100 @@ class NBPowerBLEClient:
         }
 
     async def get_charger_config(self) -> NBPowerChargerConfig:
-        """CMD 47 — Get static charger configuration.
+        """CMD 47 — Get full charger configuration.
 
-        Response layout (per app):
-            n[0]    = packed flags, bit 7 = 50/60Hz indicator
-            n[10]   = max amps supported by hardware (capped at 50)
+        Note: this is a protected command — the device requires a valid PIN
+        (verified via CMD 41) before it returns the config.
+
+        Response layout (15 bytes, per app's showConfigSetting):
+            n[0]  = flags: bit0=cpCheck, bit1=keyCheck, bit2=digitalProtocol,
+                    bit3=autoRecharge, bit4=cpRangeType, bit5=aclCheck,
+                    bit6=switchCheck, bit7=50/60Hz
+            n[1]  = half charge temp threshold (°C)
+            n[2]  = pause charge temp threshold (°C)
+            n[3]  = recovery charge temp threshold (°C)
+            n[4]  = run mode (0=mobile, 1=plug_start, 2=key_switch)
+            n[5..6] = plug-mode run minutes
+            n[7]  = plug-mode pwm range
+            n[10] = max amps (hardware, capped at 50)
         """
-        data = await self._write_command(CMD_GET_MAXAMP)
+        # CMD 47 is protected — verify PIN first
+        if not await self._ensure_password():
+            _LOGGER.debug("get_charger_config: password not verified, returning defaults")
+            return NBPowerChargerConfig()
+
+        data = await self._write_command(CMD_GET_CONFIG)
         if not data or len(data) < 11:
             return NBPowerChargerConfig()
 
         n = data
         max_amps = float(min(n[10] or 32, 50))
         is_60hz = bool((n[0] >> 7) & 1)
+        auto_recharge = bool((n[0] >> 3) & 1)
+        run_mode = n[4] if len(n) > 4 else 0
+        plug_minutes = (n[5] << 8 | n[6]) if len(n) > 6 else 0
+        plug_amps = self._pwm_to_amp(n[7]) if len(n) > 7 else 0.0
+
         return NBPowerChargerConfig(
             max_amps_hw=max_amps,
             is_60hz=is_60hz,
+            run_mode=run_mode,
+            run_mode_str=RUN_MODE_NAMES.get(run_mode, f"unknown_{run_mode}"),
+            auto_recharge=auto_recharge,
+            half_charge_temp=n[1] if len(n) > 1 else 0,
+            pause_charge_temp=n[2] if len(n) > 2 else 0,
+            recovery_charge_temp=n[3] if len(n) > 3 else 0,
+            plug_mode_minutes=plug_minutes,
+            plug_mode_amps=plug_amps,
+            raw_config=bytes(n),
         )
+
+    async def set_run_mode(self, run_mode: int) -> bool:
+        """CMD 48 — Set the charger run mode.
+
+        Args:
+            run_mode: 0=mobile control, 1=plug start (auto-charge on plug),
+                      2=key switch.
+
+        This reads the current config (CMD 47), changes only byte 4 (run mode),
+        and writes the whole config back (CMD 48), preserving all other settings.
+        Requires the device PIN.
+        """
+        if run_mode not in (0, 1, 2):
+            _LOGGER.error("Invalid run mode: %s", run_mode)
+            return False
+
+        # Verify PIN (CMD 48 is a protected command)
+        if not await self._ensure_password():
+            _LOGGER.error("Cannot set run mode: password verification failed")
+            return False
+
+        # Read current config fresh to get all current bytes
+        cfg = await self.get_charger_config()
+        if not cfg.raw_config or len(cfg.raw_config) < 11:
+            _LOGGER.error("Cannot set run mode: failed to read current config")
+            return False
+
+        # Build the config payload from raw, changing only byte 4 (run mode)
+        config = bytearray(cfg.raw_config)
+        config[4] = run_mode
+
+        # For plug_start mode, ensure valid minutes and amps are set
+        if run_mode == 1:
+            plug_minutes = (config[5] << 8 | config[6]) if len(config) > 6 else 0
+            if plug_minutes < 1:
+                plug_minutes = 600  # default 10 hours
+                config[5] = (plug_minutes >> 8) & 0xFF
+                config[6] = plug_minutes & 0xFF
+            if len(config) > 7 and config[7] < 25:  # pwm < 6A
+                config[7] = self._amp_to_pwm(6.0)
+
+        data = await self._write_command(CMD_SET_CONFIG, list(config))
+        if not data:
+            return False
+        success = data[0] == 1
+        _LOGGER.info("Set run mode to %d: %s", run_mode, "OK" if success else "FAILED")
+        return success
 
     async def get_last_session(self) -> NBPowerLastSession:
         """CMD 50 — Get information about the last charging session.

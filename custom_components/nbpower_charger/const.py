@@ -4,10 +4,12 @@ DOMAIN = "nbpower_charger"
 
 # Config keys
 CONF_MAX_AMPS = "max_amps"
+CONF_PASSWORD = "password"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5   # seconds between polls
 DEFAULT_MAX_AMPS = 16       # Amperes
+DEFAULT_PASSWORD = "000000" # Default device PIN
 
 # Charge state constants
 CHARGE_STATE_UNPLUGGED  = 0

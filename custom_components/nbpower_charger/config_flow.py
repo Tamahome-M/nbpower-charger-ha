@@ -14,7 +14,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_MAC, CONF_NAME, CONF_SCAN_INTERVAL
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, DEFAULT_MAX_AMPS, CONF_MAX_AMPS
+from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, DEFAULT_MAX_AMPS, CONF_MAX_AMPS, CONF_PASSWORD, DEFAULT_PASSWORD
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,17 +64,20 @@ class NBPowerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             name = user_input.get(CONF_NAME) or self._discovered_name
             scan_interval = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            password = user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD) or DEFAULT_PASSWORD
             return self.async_create_entry(
                 title=name,
                 data={
                     CONF_MAC: self._discovered_mac,
                     CONF_NAME: name,
                     CONF_SCAN_INTERVAL: scan_interval,
+                    CONF_PASSWORD: password,
                 },
             )
 
         schema = vol.Schema({
             vol.Optional(CONF_NAME, default=self._discovered_name): str,
+            vol.Optional(CONF_PASSWORD, default=DEFAULT_PASSWORD): str,
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=DEFAULT_SCAN_INTERVAL,
@@ -166,18 +169,21 @@ class NBPowerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 name = user_input.get(CONF_NAME) or f"NBPower {mac[-8:]}"
                 scan_interval = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+                password = user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD) or DEFAULT_PASSWORD
                 return self.async_create_entry(
                     title=name,
                     data={
                         CONF_MAC: mac,
                         CONF_NAME: name,
                         CONF_SCAN_INTERVAL: scan_interval,
+                        CONF_PASSWORD: password,
                     },
                 )
 
         schema = vol.Schema({
             vol.Required(CONF_MAC): str,
             vol.Optional(CONF_NAME): str,
+            vol.Optional(CONF_PASSWORD, default=DEFAULT_PASSWORD): str,
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=DEFAULT_SCAN_INTERVAL,
@@ -217,8 +223,16 @@ class NBPowerOptionsFlow(config_entries.OptionsFlow):
             CONF_MAX_AMPS,
             self.config_entry.data.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS),
         )
+        current_password = self.config_entry.options.get(
+            CONF_PASSWORD,
+            self.config_entry.data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+        )
 
         schema = vol.Schema({
+            vol.Optional(
+                CONF_PASSWORD,
+                default=current_password,
+            ): str,
             vol.Optional(
                 CONF_SCAN_INTERVAL,
                 default=current_interval,

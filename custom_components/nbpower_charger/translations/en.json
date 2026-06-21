@@ -7,7 +7,8 @@
         "description": "Found device **{name}**\n\nMAC: `{mac}`\n\nConfirm to add it to Home Assistant.",
         "data": {
           "name": "Device Name",
-          "scan_interval": "Poll interval (seconds)"
+          "scan_interval": "Poll interval (seconds)",
+          "password": "Device password (PIN)"
         }
       },
       "pick_device": {
@@ -23,7 +24,8 @@
         "data": {
           "mac": "MAC Address (XX:XX:XX:XX:XX:XX)",
           "name": "Device Name",
-          "scan_interval": "Poll interval (seconds)"
+          "scan_interval": "Poll interval (seconds)",
+          "password": "Device password (PIN)"
         }
       }
     },
@@ -43,7 +45,8 @@
         "title": "NBPower Charger Settings",
         "data": {
           "scan_interval": "Poll interval (seconds)",
-          "max_amps": "Default maximum current (A)"
+          "max_amps": "Default maximum current (A)",
+          "password": "Device password (PIN)"
         }
       }
     }

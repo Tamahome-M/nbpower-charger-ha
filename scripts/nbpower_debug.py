@@ -325,24 +325,34 @@ class NBPowerDebug:
         token[5] = (sum(token[:5]) % 35) & 0xFF
         return token
 
-    async def start_charging(self, amps: float = 16.0, minutes: int = 0):
-        """Start charging with proper auth challenge.
+    async def verify_pwd_internal(self, pwd: str) -> bool:
+        """Internal password verify (CMD 41) used before start/stop."""
+        pwd_padded = (pwd[:6] + "000000")[:6]
+        pwd_bytes = [ord(c) for c in pwd_padded]
+        d = await self.send(0x29, pwd_bytes)
+        return bool(d) and d[0] in (1, 255)
 
-        For minutes=0 (unlimited / stop): use hardcoded token [1,1,1,1,1,0].
-        For minutes>0: request challenge via CMD 66, compute real token.
-        """
+    async def start_charging(self, amps: float = 16.0, minutes: int = 0, pwd: str = "000000"):
+        """Start charging with password verification + auth challenge."""
         print(f"=== CMD 67: Запуск зарядки ({amps} А, {'без ограничения' if not minutes else str(minutes)+' мин'}) ===")
+
+        # Verify password first (CMD 41), as the app does
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — старт отменён")
+            print()
+            return
+        print("  ✅ Пароль OK")
+
         pwm = max(13, round(250 * amps / 60))
         minutes_hi = (minutes >> 8) & 0xFF
         minutes_lo = minutes & 0xFF
 
         # Get token
         if minutes == 0:
-            # Stop or special mode — use hardcoded token from app
             token = [1, 1, 1, 1, 1, 0]
             print(f"  Используем hardcoded токен: {bytes(token).hex()}")
         else:
-            # Real charge start — need auth challenge
             challenge = await self.get_auth_challenge()
             if challenge is None:
                 print("  ❌ Не удалось получить challenge — отмена")
@@ -351,10 +361,10 @@ class NBPowerDebug:
             print(f"  Вычислен токен: {bytes(token).hex()}")
 
         params = token + [
-            minutes_hi, minutes_lo,    # l[6..7] — duration
-            0, 0,                       # l[8..9] — delay
-            pwm,                        # l[10] — PWM
-            0, 0                        # l[11..12] — DC voltage (AC = 0)
+            minutes_hi, minutes_lo,
+            0, 0,
+            pwm,
+            0, 0
         ]
         d = await self.send(0x43, params)
         if d:
@@ -369,9 +379,14 @@ class NBPowerDebug:
             print(f"  Raw: {d.hex()}")
         print()
 
-    async def stop_charging(self):
+    async def stop_charging(self, pwd: str = "000000"):
         print("=== CMD 67: Остановка зарядки (minutes=0) ===")
-        # Stop = startCharge(0) — uses hardcoded token
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — остановка отменена")
+            print()
+            return
+        print("  ✅ Пароль OK")
         params = [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
         d = await self.send(0x43, params)
         if d:
@@ -388,6 +403,105 @@ class NBPowerDebug:
         if d:
             print(f"  Response raw: {d.hex()}")
             print(f"  As ints: {list(d)}")
+        print()
+
+    async def test_password(self, pwd: str = "000000"):
+        """CMD 41 — Verify the device PIN. Default is '000000'.
+
+        BLE format: writeCommand(41, [6 ASCII password bytes])
+        (no extra prefix byte — that's only for net/IMEI mode)
+
+        Response byte[0]:
+            1 / undefined / 255 = OK (password accepted)
+            2 = locked (5 wrong attempts)
+            0 / other = wrong password
+        """
+        print(f"=== CMD 41: Проверка пароля '{pwd}' ===")
+        # setPasswordToCommand pads with '0' char (0x30) to 6 chars, ASCII-encoded
+        pwd_padded = (pwd[:6] + "000000")[:6]
+        pwd_bytes = [ord(c) for c in pwd_padded]
+        params = pwd_bytes  # BLE: just the 6 ASCII bytes, NO leading [1]
+        d = await self.send(0x29, params)
+        if d is not None:
+            result = d[0] if len(d) > 0 else None
+            if result in (1, 255, None):
+                print(f"  ✅ Пароль ПРИНЯТ (byte[0]={result})")
+            elif result == 2:
+                print(f"  🔒 Заблокировано (5 неверных попыток подряд)")
+            else:
+                print(f"  ❌ Пароль НЕ принят (byte[0]={result})")
+            print(f"  Отправлено: {bytes(params).hex()} (ASCII '{pwd_padded}')")
+            print(f"  Raw ответ:  {d.hex()}")
+        print()
+
+    async def get_config(self, pwd: str = "000000"):
+        """CMD 47 — Read full charger configuration (requires PIN)."""
+        print("=== CMD 47: Конфигурация устройства ===")
+        # CMD 47 is protected — verify PIN first
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — чтение конфига невозможно")
+            print()
+            return None
+        print("  ✅ Пароль OK")
+        d = await self.send(0x2F)
+        if d and len(d) >= 11:
+            run_modes = {0: "Управление из приложения", 1: "Зарядка с вилки (авто)", 2: "Запуск ключом"}
+            run_mode = d[4]
+            print(f"  Режим работы: {run_mode} → {run_modes.get(run_mode, '?')}")
+            print(f"  Авто-возобновление: {'Да' if (d[0]>>3)&1 else 'Нет'}")
+            print(f"  Макс. ток: {min(d[10] or 32, 50)} А")
+            print(f"  50/60 Гц: {'60' if (d[0]>>7)&1 else '50'} Гц")
+            print(f"  Темп. понижения: {d[1]}°C")
+            print(f"  Темп. паузы: {d[2]}°C")
+            print(f"  Темп. восстановления: {d[3]}°C")
+            plug_min = d[5]<<8 | d[6]
+            print(f"  Plug-режим: {plug_min} мин, ток {self._pwm2amp(d[7])} А")
+            print(f"  Raw: {d.hex()}")
+        else:
+            print(f"  Raw (короткий): {d.hex() if d else 'нет'}")
+        print()
+        return d
+
+    @staticmethod
+    def _pwm2amp(pwm):
+        raw = pwm / 250 * 60
+        frac = raw % 1
+        frac = 0.5 if 0.3 <= frac <= 0.7 else (1.0 if frac > 0.7 else 0.0)
+        return int(raw) + frac
+
+    async def set_run_mode(self, mode: int, pwd: str = "000000"):
+        """CMD 48 — Set run mode (0=mobile, 1=plug-start, 2=key)."""
+        names = {0: "Управление из приложения", 1: "Зарядка с вилки (авто)", 2: "Запуск ключом"}
+        print(f"=== CMD 48: Установка режима {mode} ({names.get(mode, '?')}) ===")
+        print(f"  Проверка пароля '{pwd}'...")
+        if not await self.verify_pwd_internal(pwd):
+            print("  ❌ Пароль не принят — отмена")
+            print()
+            return
+        print("  ✅ Пароль OK")
+
+        # Read current config
+        cfg = await self.send(0x2F)
+        if not cfg or len(cfg) < 11:
+            print("  ❌ Не удалось прочитать текущий конфиг")
+            print()
+            return
+        config = bytearray(cfg)
+        config[4] = mode
+        if mode == 1:  # plug-start needs valid minutes/amps
+            plug_min = config[5]<<8 | config[6]
+            if plug_min < 1:
+                config[5] = 600 >> 8
+                config[6] = 600 & 0xFF
+            if config[7] < 25:
+                config[7] = round(250 * 6 / 60)
+        d = await self.send(0x30, list(config))
+        if d:
+            if d[0] == 1:
+                print(f"  ✅ Режим установлен! Raw: {d.hex()}")
+            else:
+                print(f"  ❌ Ошибка установки (byte[0]={d[0]}). Raw: {d.hex()}")
         print()
 
     async def disconnect(self):
@@ -435,6 +549,14 @@ async def main():
     parser.add_argument("--raw", nargs="+", type=lambda x: int(x, 16),
                         metavar="HEX", help="Отправить сырую команду (hex байты, напр. --raw 31 01)")
     parser.add_argument("--status-only", action="store_true", help="Только статус (без метра и времени)")
+    parser.add_argument("--test-pwd", type=str, metavar="PWD",
+                        help="Проверить пароль через CMD 41 (по умолчанию 000000)")
+    parser.add_argument("--pwd", type=str, default="000000", metavar="PWD",
+                        help="Пароль устройства для старта/остановки (по умолчанию 000000)")
+    parser.add_argument("--config", action="store_true",
+                        help="Прочитать конфигурацию устройства (CMD 47)")
+    parser.add_argument("--set-mode", type=int, choices=[0, 1, 2], metavar="MODE",
+                        help="Установить режим: 0=приложение, 1=зарядка с вилки, 2=ключ")
 
     args = parser.parse_args()
 
@@ -453,12 +575,20 @@ async def main():
 
         if args.raw:
             await dbg.send_raw(args.raw)
+        elif args.test_pwd is not None:
+            await dbg.test_password(args.test_pwd or "000000")
+        elif args.config:
+            await dbg.get_config(pwd=args.pwd)
+        elif args.set_mode is not None:
+            await dbg.set_run_mode(args.set_mode, pwd=args.pwd)
+            await asyncio.sleep(1)
+            await dbg.get_config(pwd=args.pwd)
         elif args.start:
-            await dbg.start_charging(amps=args.amps, minutes=args.minutes)
+            await dbg.start_charging(amps=args.amps, minutes=args.minutes, pwd=args.pwd)
             await asyncio.sleep(1)
             await dbg.get_status()
         elif args.stop:
-            await dbg.stop_charging()
+            await dbg.stop_charging(pwd=args.pwd)
             await asyncio.sleep(1)
             await dbg.get_status()
         else:

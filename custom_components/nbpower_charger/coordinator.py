@@ -36,6 +36,7 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         mac: str,
         name: str,
         scan_interval: int,
+        password: str = "000000",
     ) -> None:
         super().__init__(
             hass,
@@ -46,6 +47,7 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         self.mac = mac
         self.charger_name = name
         self.client = NBPowerBLEClient(mac)
+        self.client.set_password(password)
         self.device_info: NBPowerDeviceInfo | None = None
         self.charger_config: NBPowerChargerConfig = NBPowerChargerConfig()
         self._max_amps: float = DEFAULT_MAX_AMPS
@@ -144,6 +146,10 @@ class NBPowerCoordinator(DataUpdateCoordinator):
                     self._cached_network = await self.client.get_network_info()
                 except Exception as ex:
                     _LOGGER.debug("get_network_info failed: %s", ex)
+                try:
+                    self.charger_config = await self.client.get_charger_config()
+                except Exception as ex:
+                    _LOGGER.debug("get_charger_config refresh failed: %s", ex)
 
             return {
                 "status": status,
@@ -193,6 +199,29 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         self._max_amps = max(6.0, min(hw_max, float(amps)))
         if explicit:
             self._max_amps_explicitly_set = True
+
+    def set_password(self, password: str) -> None:
+        """Update the device PIN used for protected commands."""
+        self.client.set_password(password)
+
+    async def async_set_run_mode(self, run_mode: int) -> bool:
+        """Change the charger run mode (0=mobile, 1=plug-start, 2=key)."""
+        if not await self._ensure_connected():
+            _LOGGER.error("Cannot set run mode: not connected")
+            return False
+        result = await self.client.set_run_mode(run_mode)
+        if result:
+            # Re-read config so the new mode is reflected
+            try:
+                self.charger_config = await self.client.get_charger_config()
+            except Exception as ex:
+                _LOGGER.debug("Failed to re-read config after run mode change: %s", ex)
+            await self.async_request_refresh()
+        return result
+
+    @property
+    def run_mode(self) -> int:
+        return self.charger_config.run_mode
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
