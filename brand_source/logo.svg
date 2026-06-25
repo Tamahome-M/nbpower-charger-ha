@@ -1,0 +1,32 @@
+<svg width="720" height="256" viewBox="0 0 720 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bolt2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffe14d"/>
+      <stop offset="100%" stop-color="#ffc400"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Charging station icon (left) -->
+  <g transform="translate(20, 28)">
+    <!-- Main pillar -->
+    <rect x="40" y="20" width="100" height="180" rx="16" ry="16" fill="#1faa4d"/>
+    <!-- Screen -->
+    <rect x="56" y="40" width="68" height="54" rx="8" ry="8" fill="#ffffff"/>
+    <!-- Lightning bolt -->
+    <path d="M96 48 L74 72 L89 72 L85 94 L108 64 L92 64 Z" fill="url(#bolt2)"/>
+    <!-- Cable arm -->
+    <path d="M140 86 q38 0 38 38 l0 46 q0 24 -24 24 l-9 0"
+          fill="none" stroke="#1faa4d" stroke-width="15" stroke-linecap="round"/>
+    <!-- Connector -->
+    <circle cx="145" cy="196" r="17" fill="#1faa4d"/>
+    <circle cx="145" cy="196" r="8" fill="#ffffff"/>
+    <!-- Base -->
+    <rect x="28" y="194" width="124" height="24" rx="9" ry="9" fill="#1faa4d"/>
+  </g>
+
+  <!-- Text -->
+  <text x="220" y="120" font-family="Arial, Helvetica, sans-serif" font-weight="700"
+        font-size="64" fill="#1faa4d">NBPower</text>
+  <text x="222" y="172" font-family="Arial, Helvetica, sans-serif" font-weight="400"
+        font-size="34" fill="#888888">EV Charger</text>
+</svg>

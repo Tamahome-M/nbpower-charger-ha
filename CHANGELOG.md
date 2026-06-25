@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.8.1]
+
+### Added
+- **Integration icon & logo** — a green EV-charging-station brand image now shows in the device page and integrations list (instead of "icon not available").
+  - Ships locally in `custom_components/nbpower_charger/brand/` — works out of the box on Home Assistant 2026.3+.
+  - For older HA versions, the same images are prepared for a PR to the `home-assistant/brands` repo (see `brand_source/BRAND_README.md`).
+- SVG sources included in `brand_source/` for future edits.
+
+## [1.8.0]
+
+### Added — Energy Dashboard support
+- New **"Заряжено (для панели энергии)"** sensor — a monotonic lifetime energy total purpose-built for the HA Energy Dashboard.
+  - Grows in real time while charging (sums live session deltas from CMD 8).
+  - Correctly handles session resets — each new session adds to the running total.
+  - Survives Home Assistant restarts (RestoreEntity).
+- This solves the problem where the device's own "Всего заряжено" (total_kwh) only updated at the end of a session, so the Energy Dashboard saw no growth during charging.
+
+### How to use
+Settings → Energy → "Потребители энергии" → Add device → choose **"Заряжено (для панели энергии)"** (not "Всего заряжено").
+
 ## [1.7.0]
 
 ### Added — full feature parity with the app

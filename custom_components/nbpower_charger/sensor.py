@@ -25,6 +25,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CHARGE_STATE_NAMES
@@ -378,10 +379,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up NBPower sensors."""
     coordinator: NBPowerCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities: list = [
         NBPowerSensor(coordinator, entry, description)
         for description in SENSOR_DESCRIPTIONS
-    )
+    ]
+    # Dedicated lifetime-energy sensor for the Energy Dashboard (with restore)
+    entities.append(NBPowerEnergyDashboardSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class NBPowerSensor(CoordinatorEntity[NBPowerCoordinator], SensorEntity):
@@ -436,3 +440,66 @@ class NBPowerSensor(CoordinatorEntity[NBPowerCoordinator], SensorEntity):
         if getattr(self.entity_description, "uses_coordinator", False):
             return True
         return self.coordinator.last_update_success and bool(self.coordinator.data)
+
+
+class NBPowerEnergyDashboardSensor(
+    CoordinatorEntity[NBPowerCoordinator], RestoreEntity, SensorEntity
+):
+    """Monotonic lifetime energy sensor for the Home Assistant Energy Dashboard.
+
+    Unlike the device's own counters, this value:
+      - grows in real time while charging (sums live session deltas),
+      - survives session resets (each new session adds to the total),
+      - is restored across HA restarts via RestoreEntity.
+
+    This is the sensor to add under Settings → Energy → Individual devices.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Заряжено (для панели энергии)"
+    _attr_icon = "mdi:ev-station"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    def __init__(
+        self,
+        coordinator: NBPowerCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.data[CONF_MAC]}_energy_dashboard"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the accumulated total when the entity is added."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self.coordinator.restore_energy_total(float(last_state.state))
+            except (ValueError, TypeError):
+                pass
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        mac = self._entry.data[CONF_MAC]
+        name = self._entry.data.get(CONF_NAME, f"NBPower {mac[-8:]}")
+        dev_info = self.coordinator.device_info
+        return DeviceInfo(
+            identifiers={(DOMAIN, mac)},
+            name=name,
+            manufacturer="NBPower / Hubei Mairuisi",
+            model=f"EV Charger (device_num={dev_info.device_num})" if dev_info else "EV Charger",
+            sw_version=str(dev_info.firmware_version) if dev_info else None,
+            connections={("mac", mac)},
+        )
+
+    @property
+    def native_value(self) -> float:
+        return self.coordinator.energy_lifetime_kwh
+
+    @property
+    def available(self) -> bool:
+        return True

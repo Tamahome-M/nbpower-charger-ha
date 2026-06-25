@@ -63,6 +63,14 @@ class NBPowerCoordinator(DataUpdateCoordinator):
         self._cached_last_session: NBPowerLastSession = NBPowerLastSession()
         self._cached_totals: NBPowerTotals = NBPowerTotals()
         self._cached_network: NBPowerNetworkInfo = NBPowerNetworkInfo()
+        # Lifetime energy accumulator for the HA Energy Dashboard.
+        # The device's session kWh (CMD 8) grows live but resets to 0 each session;
+        # the device's total kWh (CMD 43) only updates at session end. We build our
+        # own monotonically-increasing total by summing session deltas, which is
+        # exactly what the Energy Dashboard needs.
+        self._energy_total_kwh: float = 0.0
+        self._last_session_kwh: float = 0.0
+        self._energy_restored: bool = False
 
     # ── Connection management ──────────────────────────────────────────────────
 
@@ -136,6 +144,22 @@ class NBPowerCoordinator(DataUpdateCoordinator):
                 meter.voltage, meter.current, meter.energy_kwh,
             )
 
+            # ── Lifetime energy accumulator (for Energy Dashboard) ──────────────
+            # The session counter (meter.energy_kwh) grows while charging and
+            # resets to 0 at the start of a new session. We track the delta and
+            # add it to a monotonic lifetime total.
+            session_kwh = meter.energy_kwh
+            if session_kwh >= self._last_session_kwh:
+                # Normal growth within the same session
+                delta = session_kwh - self._last_session_kwh
+            else:
+                # Counter reset (new session) — the new value is this session's accrual
+                delta = session_kwh
+            # Guard against spurious huge jumps (bad BLE read)
+            if 0 <= delta < 5:
+                self._energy_total_kwh += delta
+            self._last_session_kwh = session_kwh
+
             # Slow data: last session + totals + network every Nth cycle
             self._poll_counter += 1
             if self._poll_counter % SLOW_POLL_MULTIPLIER == 1:
@@ -163,6 +187,7 @@ class NBPowerCoordinator(DataUpdateCoordinator):
                 "last_session": self._cached_last_session,
                 "totals": self._cached_totals,
                 "network": self._cached_network,
+                "energy_lifetime_kwh": round(self._energy_total_kwh, 3),
                 "available": True,
             }
         except Exception as ex:
@@ -251,6 +276,18 @@ class NBPowerCoordinator(DataUpdateCoordinator):
     @property
     def run_mode(self) -> int:
         return self.charger_config.run_mode
+
+    @property
+    def energy_lifetime_kwh(self) -> float:
+        """Monotonic lifetime energy total (kWh) for the Energy Dashboard."""
+        return round(self._energy_total_kwh, 3)
+
+    def restore_energy_total(self, value: float) -> None:
+        """Restore the lifetime energy accumulator after a HA restart."""
+        if not self._energy_restored and value is not None and value >= 0:
+            self._energy_total_kwh = float(value)
+            self._energy_restored = True
+            _LOGGER.debug("Restored lifetime energy total: %.3f kWh", value)
 
     @property
     def bluetooth_rssi(self) -> int | None:

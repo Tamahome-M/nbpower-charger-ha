@@ -1,7 +1,7 @@
 {
   "domain": "nbpower_charger",
   "name": "NBPower EV Charger (BLE)",
-  "version": "1.7.0",
+  "version": "1.8.1",
   "config_flow": true,
   "documentation": "https://github.com/Tamahome-M/nbpower-charger-ha",
   "issue_tracker": "https://github.com/Tamahome-M/nbpower-charger-ha/issues",
